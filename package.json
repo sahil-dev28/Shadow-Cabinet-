@@ -1,0 +1,22 @@
+{
+  "name": "shadow-cabinet",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start"
+  },
+  "dependencies": {
+    "@mastra/core": "1.57.0"
+  },
+  "devDependencies": {
+    "mastra": "1.23.0",
+    "typescript": "^6.0.3",
+    "@types/node": "latest"
+  }
+}
