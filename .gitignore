@@ -3,6 +3,7 @@ dist
 .mastra
 .env
 .env.*
+!.env.example
 *.db
 *.db-*
 *.duckdb

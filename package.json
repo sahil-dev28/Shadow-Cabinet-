@@ -7,16 +7,18 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "mastra dev",
-    "build": "mastra build",
+    "dev": "mastra dev --dir shadow-cabinet-server/src/mastra",
+    "build": "mastra build --dir shadow-cabinet-server/src/mastra",
     "start": "mastra start"
   },
   "dependencies": {
-    "@mastra/core": "1.57.0"
+    "@mastra/ai-sdk": "^1.7.2",
+    "@mastra/core": "1.57.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "mastra": "1.23.0",
-    "typescript": "^6.0.3",
-    "@types/node": "latest"
+    "typescript": "^6.0.3"
   }
 }
