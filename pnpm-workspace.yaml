@@ -1,5 +1,6 @@
 packages:
   - '.'
+  - 'shadow-cabinet-web'
 minimumReleaseAgeExclude:
   - mastra
   - "@mastra/*"
