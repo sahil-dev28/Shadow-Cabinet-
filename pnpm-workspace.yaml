@@ -4,6 +4,8 @@ packages:
 minimumReleaseAgeExclude:
   - mastra
   - "@mastra/*"
+  - "@assistant-ui/*"
+  - assistant-stream
 allowBuilds:
   esbuild: true
   sharp: true

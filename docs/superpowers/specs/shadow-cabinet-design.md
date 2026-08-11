@@ -29,6 +29,10 @@ No CTO or CRO added for this prototype. Scope stays at four to keep the
 debate readable and to leave time for the orchestration and grounding work,
 which matter more to this evaluation than persona count.
 
+A fifth agent, the **chair**, facilitates. It is not a board member: it has
+no lens, takes no position, and never participates in the debate. It only
+closes the session, and is described under Proposed Approach.
+
 ## Proposed Approach
 
 Each persona is a distinct Mastra agent with its own system prompt. Persona
@@ -38,8 +42,9 @@ share one memory scope: every agent sees the same CEO question and the same
 debate history rather than reasoning in isolation. Distinct instructions
 plus shared transcript is the whole architecture.
 
-Debate happens in exactly two passes. Two is a hard limit, not a starting
-point, so a disagreement cannot loop without resolution.
+Debate happens in exactly three passes, closed by a chair. Three is a hard
+limit, not a starting point, so a disagreement cannot loop without
+resolution.
 
 **Pass one.** The CEO's question goes to all four agents concurrently. Each
 responds using its own persona and the grounding data it pulls itself. The
@@ -66,8 +71,33 @@ judge model and no keyword heuristic, and the boolean makes the decision
 inspectable in the stored thread. This is what produces CFO pushing back on
 CMO's spend request instead of four agents answering past each other.
 
-The CEO sees the full pass one and pass two exchange before weighing in
-themselves.
+**Pass three.** Right of reply. Only the personas actually named in a pass
+two objection are called again, and each is shown only the objections aimed
+at it. Usually that is one or two agents, not four.
+
+This pass is what makes the board a discussion rather than a round of
+complaints filed with the CEO. Without it, the CMO objects to the CFO and
+the CFO never answers, which is a response, not an exchange. With it the
+transcript reads position → objection → answer, and the CEO watches an
+argument play out instead of reading four parallel statements about each
+other.
+
+Pass three does not re-open pass two. A reply cannot raise a new objection
+against a third persona, because that would need a fourth pass to answer and
+the loop would not terminate. Replies defend or concede, nothing else.
+
+**The chair.** A fifth agent, not a board member and not a voting persona,
+closes every session with three things: what the board agreed on, what is
+still contested and why, and the decision that is now the CEO's to make. It
+has the same grounding tools and the same prohibition on inventing numbers,
+but no lens of its own to argue from.
+
+The chair exists because four executives and a round of rebuttals is a lot
+of text to hand a CEO with no landing. Its job is to make the disagreement
+actionable, not to resolve it. Where the board is genuinely split, the chair
+says so and names the trade-off rather than picking a side.
+
+The CEO sees all three passes and the chair's read before weighing in.
 
 ## Grounding
 
@@ -130,16 +160,25 @@ depends on which one is used.
 
 CFO built first end to end, persona, tool calling, streaming, saved to
 Mongo, then CMO, COO, CSO reuse that same pipeline with new prompts and
-tools rather than new plumbing. The debate view renders pass one and pass
-two as a visibly separate exchange, not a single merged answer, so the
-disagreement the assignment asks for is something the CEO can actually see
-happening rather than something asserted in text.
+tools rather than new plumbing.
+
+The debate view renders four visibly separate sections rather than one
+merged answer: opening statements, where the board disagrees, replies, and
+the chair's read. Each objection and each reply names who it is aimed at, so
+the exchange is something the CEO can watch happening rather than something
+asserted in text.
+
+Rounds render whole. A round's agents run concurrently, so streaming them
+token by token would interleave four voices into noise; each round is
+written to the stream once it is complete, in a fixed persona order.
 
 ## Out of Scope
 
 - Auth, per the assignment's own instructions
 - Real financial system integrations, mock CSV/JSON upload is sufficient
-- More than four personas
+- More than four board personas, the chair aside
+- A fourth debate pass. Replies defend or concede; they do not open new
+  fronts, because answering those would need a fifth pass
 - Polish beyond what's needed to demonstrate the debate and grounding
 
 ## Assumptions
@@ -152,6 +191,14 @@ happening rather than something asserted in text.
 - An agent is a fair judge of whether it disagrees. Cheaper and more
   inspectable than a separate judge model; if agents turn out to be
   agreeable to a fault, a judge is the fallback
+- A single reply is enough to make the exchange feel real. If the CEO
+  routinely wants to see the argument go further, that is a signal to make
+  round count a per-question setting rather than to raise the cap
+- A chair with no lens stays neutral. If it starts favouring a persona, the
+  fix is to strip its opinion further, not to give it a vote
+- Cost scales with disagreement, not with board size: a unanimous board
+  costs eight agent calls plus the chair, a contested one adds one call per
+  persona that was objected to
 
 ## Open Questions
 
