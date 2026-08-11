@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
 
 import { getMetricTool } from "../tools/get-metric-tool.ts";
 
@@ -44,4 +45,7 @@ what you would need to change your mind.
 `,
   model: "anthropic/claude-sonnet-4-5",
   tools: { getMetricTool },
+  // All personas share the board thread, so each sees the whole debate.
+  // Distinctness comes from instructions, not from memory isolation.
+  memory: new Memory({ options: { lastMessages: 20 } }),
 });
