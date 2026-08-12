@@ -1,0 +1,99 @@
+{
+  "company": "Northwind Logistics",
+  "currency": "USD",
+  "unit": "thousands",
+  "quarters": [
+    {
+      "period": "2024-Q4",
+      "revenue": 38200,
+      "cogs": 14860,
+      "grossProfit": 23340,
+      "grossMarginPct": 61.1,
+      "salesMarketing": 8400,
+      "rnd": 4200,
+      "ga": 3500,
+      "operatingIncome": 7240,
+      "operatingMarginPct": 19.0,
+      "cash": 21400,
+      "headcount": 310,
+      "newCustomers": 142,
+      "churnPct": 2.1,
+      "cac": 59.2,
+      "ltv": 1180,
+      "segments": [
+        { "name": "Managed Logistics", "revenue": 19864, "grossMarginPct": 72 },
+        { "name": "Freight Brokerage", "revenue": 10696, "grossMarginPct": 41 },
+        { "name": "Warehousing", "revenue": 7640, "grossMarginPct": 61 }
+      ]
+    },
+    {
+      "period": "2025-Q1",
+      "revenue": 40100,
+      "cogs": 15238,
+      "grossProfit": 24862,
+      "grossMarginPct": 62.0,
+      "salesMarketing": 8900,
+      "rnd": 4400,
+      "ga": 3600,
+      "operatingIncome": 7962,
+      "operatingMarginPct": 19.9,
+      "cash": 22800,
+      "headcount": 328,
+      "newCustomers": 155,
+      "churnPct": 2.3,
+      "cac": 57.4,
+      "ltv": 1165,
+      "segments": [
+        { "name": "Managed Logistics", "revenue": 22055, "grossMarginPct": 72 },
+        { "name": "Freight Brokerage", "revenue": 10025, "grossMarginPct": 41 },
+        { "name": "Warehousing", "revenue": 8020, "grossMarginPct": 61 }
+      ]
+    },
+    {
+      "period": "2025-Q2",
+      "revenue": 43500,
+      "cogs": 16530,
+      "grossProfit": 26970,
+      "grossMarginPct": 62.0,
+      "salesMarketing": 9800,
+      "rnd": 4600,
+      "ga": 3700,
+      "operatingIncome": 8870,
+      "operatingMarginPct": 20.4,
+      "cash": 24100,
+      "headcount": 349,
+      "newCustomers": 171,
+      "churnPct": 2.4,
+      "cac": 57.3,
+      "ltv": 1150,
+      "segments": [
+        { "name": "Managed Logistics", "revenue": 23925, "grossMarginPct": 72 },
+        { "name": "Freight Brokerage", "revenue": 10875, "grossMarginPct": 41 },
+        { "name": "Warehousing", "revenue": 8700, "grossMarginPct": 61 }
+      ]
+    },
+    {
+      "period": "2025-Q3",
+      "revenue": 47900,
+      "cogs": 20118,
+      "grossProfit": 27782,
+      "grossMarginPct": 58.0,
+      "salesMarketing": 11500,
+      "rnd": 4800,
+      "ga": 3900,
+      "operatingIncome": 7582,
+      "operatingMarginPct": 15.8,
+      "cash": 22600,
+      "headcount": 383,
+      "newCustomers": 214,
+      "churnPct": 3.1,
+      "cac": 53.7,
+      "ltv": 1090,
+      "segments": [
+        { "name": "Managed Logistics", "revenue": 21076, "grossMarginPct": 72 },
+        { "name": "Freight Brokerage", "revenue": 18681, "grossMarginPct": 41 },
+        { "name": "Warehousing", "revenue": 8143, "grossMarginPct": 61 }
+      ]
+    }
+  ]
+}
