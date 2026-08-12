@@ -1,7 +1,20 @@
 import { Agent } from "@mastra/core/agent";
+import {
+  PromptInjectionDetector,
+  TokenLimiterProcessor,
+  UnicodeNormalizer,
+} from "@mastra/core/processors";
 import { Memory } from "@mastra/memory";
 
 import { companyDataTools } from "../tools/company-data-tools.ts";
+
+/**
+ * A board turn is roughly 200 words of prose plus tool results. This caps a
+ * single persona's output so one runaway answer cannot crowd out the rest of
+ * the debate: four agents across two rounds all append to one shared thread,
+ * so context growth compounds per round rather than per message.
+ */
+const OUTPUT_TOKEN_LIMIT = 2000;
 
 export type PersonaId = "cfo" | "cmo" | "coo" | "cso";
 
@@ -60,6 +73,16 @@ export function createPersonaAgent(config: PersonaConfig): Agent {
     instructions: buildInstructions(config),
     model: "anthropic/claude-sonnet-4-5",
     tools: companyDataTools,
+    // Order matters: normalise first so the detector sees the same text the
+    // model would, not a version with control characters splitting the words
+    // an injection is built from.
+    inputProcessors: [
+      new UnicodeNormalizer({ stripControlChars: true }),
+      // Classification, not reasoning — the cheap fast model is the right tool,
+      // and this runs once per agent per round.
+      new PromptInjectionDetector({ model: "anthropic/claude-haiku-4-5" }),
+    ],
+    outputProcessors: [new TokenLimiterProcessor({ limit: OUTPUT_TOKEN_LIMIT })],
     // All four personas share the board thread, so each one sees the whole
     // debate history. Persona distinctness comes from instructions, not
     // from memory isolation.

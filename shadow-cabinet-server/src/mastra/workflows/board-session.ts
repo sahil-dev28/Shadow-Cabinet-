@@ -51,6 +51,21 @@ interface ToolCallEnvelope {
   };
 }
 
+/**
+ * A guardrail block is not an exception: `generate()` resolves normally with
+ * `tripwire` set and empty text. Left unchecked the persona renders as a blank
+ * section, which reads as "had no view" rather than "was not allowed to speak".
+ */
+function tripwireNotice(
+  personaId: PersonaId,
+  response: { tripwire?: { reason?: string } },
+): string | null {
+  if (!response.tripwire) return null;
+
+  const reason = response.tripwire.reason?.trim() || "input blocked by a guardrail";
+  return `_${personaId.toUpperCase()} is unavailable for this round: ${reason}._`;
+}
+
 /** Pairs Mastra's separate toolCalls/toolResults arrays back into one record. */
 function collectEvidence(response: {
   toolCalls?: readonly ToolCallEnvelope[];
@@ -120,10 +135,12 @@ const openingStep = createStep({
       memory: { resource: "ceo", thread: threadId },
     });
 
+    const blocked = tripwireNotice(personaId, response);
+
     return {
       personaId,
-      text: response.text,
-      evidence: collectEvidence(response),
+      text: blocked ?? response.text,
+      evidence: blocked ? [] : collectEvidence(response),
       question,
       threadId,
     };
@@ -202,11 +219,12 @@ citing figures you have fetched.`,
       },
     );
 
-    const verdict = response.object ?? {
-      disagrees: false,
-      with: [],
-      statement: "",
-    };
+    // A blocked rebuttal is surfaced as a disagreement entry so the reader sees
+    // the persona was silenced, not that it declined to object.
+    const blocked = tripwireNotice(personaId, response);
+    const verdict = blocked
+      ? { disagrees: true, with: [] as PersonaId[], statement: blocked }
+      : (response.object ?? { disagrees: false, with: [], statement: "" });
 
     return { personaId, ...verdict, openingsMarkdown, personas };
   },
