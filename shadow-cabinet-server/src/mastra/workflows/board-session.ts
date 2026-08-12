@@ -28,6 +28,10 @@ const rebuttalEntrySchema = z.object({
   disagrees: z.boolean(),
   with: z.array(personaIdSchema),
   statement: z.string(),
+  // Carried through the second fan-out so the final step can prepend pass one.
+  // `workflowRoute` does not forward writer output, so the transcript has to
+  // survive as workflow output rather than as stream text.
+  openingsMarkdown: z.string(),
 });
 
 /** The shape pass two asks each persona to return. */
@@ -71,6 +75,7 @@ const renderOpeningsStep = createStep({
     question: z.string(),
     threadId: z.string(),
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
+    openingsMarkdown: z.string(),
   }),
   execute: async ({ inputData, writer }) => {
     const openings: OpeningEntry[] = inputData.map((entry) => ({
@@ -79,12 +84,14 @@ const renderOpeningsStep = createStep({
     }));
 
     // Stream the whole round at once so the sections cannot interleave.
-    await writer?.write(renderOpeningRound(openings));
+    const openingsMarkdown = renderOpeningRound(openings);
+    await writer?.write(openingsMarkdown);
 
     return {
       question: inputData[0].question,
       threadId: inputData[0].threadId,
       openings,
+      openingsMarkdown,
     };
   },
 });
@@ -97,10 +104,11 @@ const rebuttalStep = createStep({
     question: z.string(),
     threadId: z.string(),
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
+    openingsMarkdown: z.string(),
   }),
   outputSchema: rebuttalEntrySchema,
   execute: async ({ inputData, mastra }) => {
-    const { personaId, question, threadId, openings } = inputData;
+    const { personaId, question, threadId, openings, openingsMarkdown } = inputData;
     const agent = mastra.getAgentById(`${personaId}-agent`);
 
     const others = formatOpeningsForRebuttal(openings, personaId);
@@ -128,7 +136,7 @@ citing figures you have fetched.`,
       statement: "",
     };
 
-    return { personaId, ...verdict };
+    return { personaId, ...verdict, openingsMarkdown };
   },
 });
 
@@ -140,7 +148,9 @@ const renderRebuttalsStep = createStep({
     const markdown = renderRebuttalRound(inputData);
     await writer?.write(`\n${markdown}`);
 
-    return { transcript: markdown };
+    // Both rounds, in one string: the workflow's own output is the only place
+    // the client can read the transcript from.
+    return { transcript: `${inputData[0].openingsMarkdown}\n${markdown}` };
   },
 });
 
@@ -166,6 +176,7 @@ export const boardSessionWorkflow = createWorkflow({
       question: inputData.question,
       threadId: inputData.threadId,
       openings: inputData.openings,
+      openingsMarkdown: inputData.openingsMarkdown,
     })),
   )
   .foreach(rebuttalStep, { concurrency: 4 })
