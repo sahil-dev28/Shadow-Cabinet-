@@ -14,7 +14,6 @@ const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 // Eight agent calls with tool use. A contested board takes minutes, not seconds.
 export const maxDuration = 300;
 
-/** assistant-ui sends UIMessages; the workflow wants a single question string. */
 function lastUserText(messages: UIMessage[]): string {
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
 
@@ -30,18 +29,13 @@ function sse(event: unknown): string {
 }
 
 /**
- * Mastra's `workflowRoute` streams workflow lifecycle events, not text parts,
- * so a browser client sees no prose, and the agents' own tool calls never leave
- * the server. We drive the workflow over the REST API and rebuild the rounds as
- * AI SDK UI messages: one message per executive, carrying that executive's own
- * grounding calls as tool parts, then one message for the debate round.
+ * Mastra's `workflowRoute` emits workflow lifecycle events, not text parts, so
+ * the rounds are rebuilt here as AI SDK UI parts.
  *
- * It is one message, not one per persona: repeated start/finish envelopes in a
- * single response accumulate into each other rather than producing separate
- * messages, which renders every earlier executive again under the next one.
- * Independent collapsing does not need separate messages — `groupPartByType`
- * groups consecutive parts, so each persona's tool calls form their own group
- * as long as that persona's text sits between them and the next persona's.
+ * One message, not one per persona: repeated start/finish envelopes accumulate
+ * into each other and re-render every earlier executive under the next one.
+ * `groupPartByType` groups consecutive parts, so each persona still collapses
+ * separately as long as its text sits between its calls and the next persona's.
  */
 function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -59,8 +53,7 @@ function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
         const id = `${persona.personaId}-opening`;
         const title = PERSONA_TITLES[persona.personaId] ?? persona.personaId;
 
-        // Tool parts first: the evidence precedes the position it supports, and
-        // both call and result are already complete, so nothing animates open.
+        // Evidence precedes the position it supports.
         for (const call of persona.evidence) {
           write(controller, {
             type: "tool-input-available",
@@ -84,8 +77,7 @@ function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
         write(controller, { type: "text-end", id });
       }
 
-      // The debate round stays plain prose: no tool parts, so nothing to
-      // collapse, and the disagreements render expanded as the spec requires.
+      // No tool parts here, so the debate round renders expanded per the spec.
       if (board.rebuttalsMarkdown.trim()) {
         const id = "board-rebuttals";
         write(controller, { type: "text-start", id });

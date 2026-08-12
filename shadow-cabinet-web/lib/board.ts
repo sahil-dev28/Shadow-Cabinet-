@@ -35,9 +35,8 @@ interface RunSnapshot {
 }
 
 /**
- * `GET /runs/:runId` returns the run flat, while the `/runs` list wraps each
- * row in `snapshot`. Accept either so a shape change in one does not hang the
- * poll loop on an undefined status.
+ * `GET /runs/:runId` returns the run flat; the `/runs` list wraps rows in
+ * `snapshot`. Accept either, or an undefined status hangs the poll loop.
  */
 function readSnapshot(body: RunSnapshot & { snapshot?: RunSnapshot }): RunSnapshot {
   return body.snapshot?.status ? body.snapshot : body;
@@ -54,11 +53,9 @@ async function asJson<T>(response: Response, what: string): Promise<T> {
 /**
  * Runs one board session and returns its transcript.
  *
- * The run is started detached and then polled, rather than awaited inside a
- * single upstream request: Mastra wraps every route in
- * `timeout(server?.timeout ?? 180_000)`, and a four-persona debate with tool
- * calls regularly runs longer than three minutes. Awaiting it in one request
- * fails with a 504 Gateway Timeout partway through an otherwise healthy run.
+ * Started detached and polled, not awaited in one request: Mastra wraps every
+ * route in `timeout(server?.timeout ?? 180_000)`, and a board regularly runs
+ * longer than that, failing with a 504 mid-run.
  */
 export async function runBoardSession({
   baseUrl,
@@ -80,8 +77,7 @@ export async function runBoardSession({
     "create-run",
   );
 
-  // Returns as soon as the run is scheduled; the board keeps working after
-  // this response closes.
+  // Returns once scheduled; the board keeps working after this response closes.
   const started = await fetchImpl(`${workflow}/start?runId=${runId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

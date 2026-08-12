@@ -1,9 +1,8 @@
 import { METRIC_NAMES, type Quarter } from "./company-data.ts";
 
 /**
- * Deliberately minimal: no quoted fields, no embedded commas. The uploaded
- * P&L is mock data for a prototype, and a real parser is a dependency this
- * does not need.
+ * Deliberately minimal: no quoted fields, no embedded commas. Mock P&L data
+ * does not justify a parser dependency.
  */
 export function parseCsv(text: string): Record<string, string>[] {
   const lines = text

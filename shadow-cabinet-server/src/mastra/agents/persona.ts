@@ -9,10 +9,8 @@ import { Memory } from "@mastra/memory";
 import { companyDataTools } from "../tools/company-data-tools.ts";
 
 /**
- * A board turn is roughly 200 words of prose plus tool results. This caps a
- * single persona's output so one runaway answer cannot crowd out the rest of
- * the debate: four agents across two rounds all append to one shared thread,
- * so context growth compounds per round rather than per message.
+ * Caps one persona's output: four agents across two rounds append to a single
+ * shared thread, so context growth compounds per round.
  */
 const OUTPUT_TOKEN_LIMIT = 2000;
 
@@ -31,9 +29,8 @@ export interface PersonaConfig {
 }
 
 /**
- * Every persona shares this contract. Only `lens` and `character` differ,
- * which is what keeps four voices distinct without letting them drift into
- * four different answer formats.
+ * Every persona shares this contract; only `lens` and `character` differ. Four
+ * distinct voices, one answer format.
  */
 function buildInstructions(config: PersonaConfig): string {
   return `
@@ -73,13 +70,10 @@ export function createPersonaAgent(config: PersonaConfig): Agent {
     instructions: buildInstructions(config),
     model: "anthropic/claude-sonnet-4-5",
     tools: companyDataTools,
-    // Order matters: normalise first so the detector sees the same text the
-    // model would, not a version with control characters splitting the words
-    // an injection is built from.
+    // Normalise first: control characters would otherwise split the words an
+    // injection is built from before the detector reads them.
     inputProcessors: [
       new UnicodeNormalizer({ stripControlChars: true }),
-      // Classification, not reasoning — the cheap fast model is the right tool,
-      // and this runs once per agent per round.
       new PromptInjectionDetector({ model: "anthropic/claude-haiku-4-5" }),
     ],
     outputProcessors: [new TokenLimiterProcessor({ limit: OUTPUT_TOKEN_LIMIT })],

@@ -17,9 +17,8 @@ const boardInputSchema = z.object({
 });
 
 /**
- * One grounding tool call an agent made while writing its opening. The UI
- * renders these as the evidence behind a persona's numbers, so the call has to
- * survive as workflow output — the browser never sees the agent's own stream.
+ * One grounding call behind a persona's numbers. It has to survive as workflow
+ * output; the browser never sees the agent's own stream.
  */
 const evidenceSchema = z.object({
   toolCallId: z.string(),
@@ -53,8 +52,7 @@ interface ToolCallEnvelope {
 
 /**
  * A guardrail block is not an exception: `generate()` resolves normally with
- * `tripwire` set and empty text. Left unchecked the persona renders as a blank
- * section, which reads as "had no view" rather than "was not allowed to speak".
+ * `tripwire` set and empty text, which would render as "had no view".
  */
 function tripwireNotice(
   personaId: PersonaId,
@@ -98,9 +96,8 @@ const rebuttalEntrySchema = z.object({
   disagrees: z.boolean(),
   with: z.array(personaIdSchema),
   statement: z.string(),
-  // Carried through the second fan-out so the final step can prepend pass one.
-  // `workflowRoute` does not forward writer output, so the transcript has to
-  // survive as workflow output rather than as stream text.
+  // Carried through the second fan-out: `workflowRoute` does not forward writer
+  // output, so the transcript survives as workflow output, not stream text.
   openingsMarkdown: z.string(),
   personas: z.array(personaTurnSchema),
 });
@@ -242,10 +239,8 @@ const renderRebuttalsStep = createStep({
     const markdown = renderRebuttalRound(inputData);
     await writer?.write(`\n${markdown}`);
 
-    // Both rounds, in one string: the workflow's own output is the only place
-    // the client can read the transcript from. `personas` carries the same
-    // openings split per agent, with the grounding calls each one made, so the
-    // UI can render one message per executive instead of one merged answer.
+    // `transcript` is both rounds merged; `personas` is the same openings split
+    // per agent so the UI can render each executive with its own evidence.
     return {
       transcript: `${inputData[0].openingsMarkdown}\n${markdown}`,
       personas: inputData[0].personas,
@@ -263,7 +258,6 @@ export const boardSessionWorkflow = createWorkflow({
     rebuttalsMarkdown: z.string(),
   }),
 })
-  // Fan the question out to all four personas.
   .map(async ({ inputData }) =>
     PERSONA_IDS.map((personaId) => ({
       personaId,
@@ -273,7 +267,7 @@ export const boardSessionWorkflow = createWorkflow({
   )
   .foreach(openingStep, { concurrency: 4 })
   .then(renderOpeningsStep)
-  // Fan out again, this time with everyone's openings attached.
+  // Fan out again, with everyone's openings attached.
   .map(async ({ inputData }) =>
     PERSONA_IDS.map((personaId) => ({
       personaId,

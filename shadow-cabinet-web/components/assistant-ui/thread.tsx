@@ -290,13 +290,8 @@ const AssistantMessage: FC = () => {
             switch (part.type) {
               case "group-chainOfThought": {
                 const running = part.status.type === "running";
-                /*
-                  The bordered card is the chain-of-thought container: header
-                  row, then each lookup as its own row with args and result.
-                  Labelled as evidence rather than "Thinking" — the point is
-                  that this executive queried the company data before quoting a
-                  number, which is the grounding rule made visible.
-                */
+                // Labelled as evidence rather than "Thinking": these are data
+                // lookups, and showing them is the grounding rule made visible.
                 return (
                   <ToolGroupRoot
                     variant="outline"
@@ -323,9 +318,8 @@ const AssistantMessage: FC = () => {
                 if (ToolGroup) {
                   return <ToolGroup group={part}>{children}</ToolGroup>;
                 }
-                // The chain-of-thought card above already collapses this run of
-                // calls; a second collapsible here would nest one inside the
-                // other and need two clicks to read a single lookup.
+                // The card above already collapses this run; nesting a second
+                // collapsible would cost two clicks per lookup.
                 return <>{children}</>;
               case "group-reasoning": {
                 if (ReasoningGroup) {
@@ -352,10 +346,8 @@ const AssistantMessage: FC = () => {
               case "data":
                 return part.dataRendererUI;
               case "indicator":
-                // A board session is minutes of server-side work that emits
-                // nothing until it finishes, so the default single dot reads as
-                // a hung page. Show the same card the evidence lands in, in its
-                // running state, so the wait looks like work.
+                // A board emits nothing for minutes, so the default single dot
+                // reads as a hung page.
                 return (
                   <ToolGroupRoot
                     variant="outline"

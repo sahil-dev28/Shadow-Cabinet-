@@ -6,10 +6,8 @@ import seed from "./company-data.json" with { type: "json" };
 import type { CompanyData } from "./company-data.ts";
 
 /**
- * Uploads land in a JSON file beside the seed rather than in Mastra storage:
- * the storage adapter exposes no key-value domain (`getStore` covers memory,
- * workflows, blobs and friends), and a file keeps the upload surviving a
- * restart without inventing a schema for one document.
+ * Uploads land in a file, not Mastra storage: the adapter exposes no key-value
+ * domain, and a file survives a restart without a schema for one document.
  */
 const UPLOAD_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -31,8 +29,8 @@ export async function getCompanyData(): Promise<CompanyData> {
     cached = JSON.parse(raw) as CompanyData;
     return cached;
   } catch {
-    // No upload yet, or an unreadable one. A missing file must not break
-    // grounding, so fall through to the seed.
+    // No upload yet, or an unreadable one: a missing file must not break
+    // grounding.
   }
 
   cached = seed as CompanyData;
