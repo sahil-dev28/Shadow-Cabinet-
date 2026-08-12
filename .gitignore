@@ -11,3 +11,6 @@ dist
 
 # Playwright MCP session artifacts
 .playwright-mcp/
+
+# Uploaded company figures (runtime state, not source)
+shadow-cabinet-server/src/mastra/data/company-data.uploaded.json
