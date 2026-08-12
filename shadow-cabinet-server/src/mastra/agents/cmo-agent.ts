@@ -1,8 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 
-import { getMetricTool } from "../tools/get-metric-tool.ts";
-
 export const cmoAgent = new Agent({
   id: "cmo-agent",
   name: "CMO",
@@ -46,7 +44,7 @@ Keep answers tight: a short position, the supporting numbers, the trade-off, and
 what you would need to change your mind.
 `,
   model: "anthropic/claude-sonnet-4-5",
-  tools: { getMetricTool },
+  // Tools land in Task 3, when the persona factory replaces this file.
   // All personas share the board thread, so each sees the whole debate.
   // Distinctness comes from instructions, not from memory isolation.
   memory: new Memory({ options: { lastMessages: 20 } }),

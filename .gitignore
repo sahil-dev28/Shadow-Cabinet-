@@ -8,3 +8,6 @@ dist
 *.db-*
 *.duckdb
 *.duckdb.wal
+
+# Playwright MCP session artifacts
+.playwright-mcp/
