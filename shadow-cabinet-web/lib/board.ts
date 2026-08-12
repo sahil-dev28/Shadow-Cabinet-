@@ -1,0 +1,114 @@
+type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
+
+export interface RunBoardSessionOptions {
+  baseUrl: string;
+  question: string;
+  threadId: string;
+  signal?: AbortSignal;
+  fetchImpl?: FetchImpl;
+  pollIntervalMs?: number;
+}
+
+interface RunSnapshot {
+  status?: string;
+  result?: { transcript?: string };
+  error?: unknown;
+}
+
+/**
+ * `GET /runs/:runId` returns the run flat, while the `/runs` list wraps each
+ * row in `snapshot`. Accept either so a shape change in one does not hang the
+ * poll loop on an undefined status.
+ */
+function readSnapshot(body: RunSnapshot & { snapshot?: RunSnapshot }): RunSnapshot {
+  return body.snapshot?.status ? body.snapshot : body;
+}
+
+async function asJson<T>(response: Response, what: string): Promise<T> {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => response.statusText);
+    throw new Error(`Board ${what} returned ${response.status}: ${detail}`);
+  }
+  return (await response.json()) as T;
+}
+
+/**
+ * Runs one board session and returns its transcript.
+ *
+ * The run is started detached and then polled, rather than awaited inside a
+ * single upstream request: Mastra wraps every route in
+ * `timeout(server?.timeout ?? 180_000)`, and a four-persona debate with tool
+ * calls regularly runs longer than three minutes. Awaiting it in one request
+ * fails with a 504 Gateway Timeout partway through an otherwise healthy run.
+ */
+export async function runBoardSession({
+  baseUrl,
+  question,
+  threadId,
+  signal,
+  fetchImpl = fetch,
+  pollIntervalMs = 2000,
+}: RunBoardSessionOptions): Promise<string> {
+  const workflow = `${baseUrl}/api/workflows/boardSession`;
+
+  const { runId } = await asJson<{ runId: string }>(
+    await fetchImpl(`${workflow}/create-run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      signal,
+    }),
+    "create-run",
+  );
+
+  // Returns as soon as the run is scheduled; the board keeps working after
+  // this response closes.
+  const started = await fetchImpl(`${workflow}/start?runId=${runId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ inputData: { question, threadId } }),
+    signal,
+  });
+
+  if (!started.ok) {
+    const detail = await started.text().catch(() => started.statusText);
+    throw new Error(`Board start returned ${started.status}: ${detail}`);
+  }
+
+  for (;;) {
+    signal?.throwIfAborted();
+
+    const snapshot = readSnapshot(
+      await asJson<RunSnapshot & { snapshot?: RunSnapshot }>(
+        await fetchImpl(`${workflow}/runs/${runId}`, { signal }),
+        "run status",
+      ),
+    );
+
+    const status = snapshot.status;
+
+    if (status === "success") {
+      const transcript = snapshot.result?.transcript;
+      if (!transcript) {
+        throw new Error("Board run succeeded but returned no transcript.");
+      }
+      return transcript;
+    }
+
+    if (status === "failed" || status === "canceled") {
+      throw new Error(
+        `Board run ${status}: ${JSON.stringify(snapshot.error ?? "no detail")}`,
+      );
+    }
+
+    if (!status) {
+      throw new Error(
+        "Board run status is missing; refusing to poll a run we cannot read.",
+      );
+    }
+
+    if (pollIntervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+}

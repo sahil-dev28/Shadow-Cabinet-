@@ -23,11 +23,13 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-export const Assistant = () => {
+export const Assistant = ({ threadId }: { threadId: string }) => {
   const runtime = useChatRuntime({
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     transport: new AssistantChatTransport({
       api: "/api/chat",
+      // The board thread is what makes the conversation resumable.
+      body: { threadId },
     }),
   });
 
