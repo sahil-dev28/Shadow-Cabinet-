@@ -19,9 +19,11 @@ describe("the board", () => {
   });
 
   it("arms every persona with the grounding tools", async () => {
-    // Note: the public accessor is getToolsForExecution(options), not getTools().
+    // `listTools()` is this version's accessor for an agent's configured tools;
+    // `Agent` has no `getTools()`, and `getToolsForExecution()` is the
+    // execution-time assembler, not the configuration read.
     for (const id of PERSONA_IDS) {
-      const tools = await boardAgents[id].getToolsForExecution({});
+      const tools = await boardAgents[id].listTools();
       expect(Object.keys(tools).sort()).toEqual([
         "compareMetricTool",
         "getMetricTool",
