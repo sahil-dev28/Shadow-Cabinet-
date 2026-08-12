@@ -1,4 +1,5 @@
 import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
 
 import { companyDataTools } from "../tools/company-data-tools.ts";
 
@@ -57,5 +58,9 @@ export function createPersonaAgent(config: PersonaConfig): Agent {
     instructions: buildInstructions(config),
     model: "anthropic/claude-sonnet-4-5",
     tools: companyDataTools,
+    // All four personas share the board thread, so each one sees the whole
+    // debate history. Persona distinctness comes from instructions, not
+    // from memory isolation.
+    memory: new Memory({ options: { lastMessages: 20 } }),
   });
 }

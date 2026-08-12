@@ -1,12 +1,24 @@
+import { LibSQLStore } from "@mastra/libsql";
 import { MongoDBStore } from "@mastra/mongodb";
 
 /**
- * Board threads live in the same MongoDB the get-metric tool reads from.
- * Memory needs a storage provider; without one Mastra silently falls back to
- * an in-memory store and every thread dies on restart.
+ * MongoDB is the intended store. LibSQL is the zero-setup fallback so a
+ * reviewer without a local Mongo can still run the prototype. Nothing else
+ * in the system depends on which one is active.
  */
-export const storage = new MongoDBStore({
-  id: "mastra-storage",
-  uri: process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017",
-  dbName: process.env.MONGODB_DB_NAME ?? "shadow_cabinet",
-});
+export function createStorage() {
+  const uri = process.env.MONGODB_URI;
+
+  if (uri) {
+    return new MongoDBStore({
+      id: "mastra-storage",
+      uri,
+      dbName: process.env.MONGODB_DB_NAME ?? "shadow_cabinet",
+    });
+  }
+
+  return new LibSQLStore({
+    id: "mastra-storage",
+    url: "file:./shadow-cabinet.db",
+  });
+}
