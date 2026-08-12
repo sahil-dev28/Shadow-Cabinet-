@@ -4,7 +4,7 @@ import { Mastra } from "@mastra/core/mastra";
 import { cfoAgent, cmoAgent, cooAgent, csoAgent } from "./agents/index.ts";
 import { boardHistoryRoute } from "./routes/board-history.ts";
 import { companyDataUploadRoute } from "./routes/company-data-upload.ts";
-import { createStorage } from "./storage.ts";
+import { createStorage } from "./storage/index.ts";
 import { boardSessionWorkflow } from "./workflows/board-session.ts";
 
 export const mastra = new Mastra({
