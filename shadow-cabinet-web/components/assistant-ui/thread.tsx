@@ -296,8 +296,16 @@ const AssistantMessage: FC = () => {
                 }
                 return (
                   <ToolGroupRoot variant="ghost">
+                    {/*
+                      Labelled as evidence, not as thinking: the point is that
+                      this executive queried the company data before quoting a
+                      number, which is the grounding rule made visible.
+                    */}
                     <ToolGroupTrigger
                       count={part.indices.length}
+                      label={`Checked ${part.indices.length} ${
+                        part.indices.length === 1 ? "figure" : "figures"
+                      }`}
                       active={part.status.type === "running"}
                     />
                     <ToolGroupContent>{children}</ToolGroupContent>

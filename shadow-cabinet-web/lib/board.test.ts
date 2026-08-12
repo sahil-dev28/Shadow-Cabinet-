@@ -35,7 +35,27 @@ function fakeFetch(
     const status = statuses[Math.min(poll++, statuses.length - 1)];
     const run = {
       status,
-      result: status === "success" ? { transcript } : undefined,
+      result:
+        status === "success"
+          ? {
+              transcript,
+              rebuttalsMarkdown: "## Where the board disagrees\n",
+              personas: [
+                {
+                  personaId: "cfo",
+                  text: "Margin is down 4 points.",
+                  evidence: [
+                    {
+                      toolCallId: "call-1",
+                      toolName: "compareMetricTool",
+                      input: { metric: "grossMarginPct" },
+                      output: { ok: true, delta: -4 },
+                    },
+                  ],
+                },
+              ],
+            }
+          : undefined,
       error: status === "failed" ? "step blew up" : undefined,
     };
 
@@ -52,7 +72,7 @@ describe("runBoardSession", () => {
   it("starts the run detached and polls until it succeeds", async () => {
     const { impl, calls } = fakeFetch(["running", "running", "success"]);
 
-    const transcript = await runBoardSession({
+    const board = await runBoardSession({
       baseUrl: "http://board",
       question: "Why did margin fall?",
       threadId: "board-1",
@@ -60,7 +80,11 @@ describe("runBoardSession", () => {
       pollIntervalMs: 0,
     });
 
-    expect(transcript).toBe("## Opening statements\n");
+    expect(board.transcript).toBe("## Opening statements\n");
+    // Each persona keeps its own grounding calls, which is what lets the UI
+    // collapse one executive's evidence without folding in the others'.
+    expect(board.personas).toHaveLength(1);
+    expect(board.personas[0].evidence[0].toolName).toBe("compareMetricTool");
     expect(calls[0]).toBe("POST /api/workflows/boardSession/create-run");
     expect(calls[1]).toBe("POST /api/workflows/boardSession/start?runId=run-1");
     expect(calls.slice(2)).toEqual([
@@ -81,7 +105,7 @@ describe("runBoardSession", () => {
         fetchImpl: impl,
         pollIntervalMs: 0,
       }),
-    ).resolves.toBe("## Opening statements\n");
+    ).resolves.toMatchObject({ transcript: "## Opening statements\n" });
   });
 
   it("gives up instead of polling forever when the status field is missing", async () => {

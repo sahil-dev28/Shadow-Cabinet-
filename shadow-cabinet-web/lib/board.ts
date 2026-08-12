@@ -9,9 +9,28 @@ export interface RunBoardSessionOptions {
   pollIntervalMs?: number;
 }
 
+export interface BoardEvidence {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output: unknown;
+}
+
+export interface BoardPersonaTurn {
+  personaId: string;
+  text: string;
+  evidence: BoardEvidence[];
+}
+
+export interface BoardResult {
+  transcript: string;
+  personas: BoardPersonaTurn[];
+  rebuttalsMarkdown: string;
+}
+
 interface RunSnapshot {
   status?: string;
-  result?: { transcript?: string };
+  result?: Partial<BoardResult>;
   error?: unknown;
 }
 
@@ -48,7 +67,7 @@ export async function runBoardSession({
   signal,
   fetchImpl = fetch,
   pollIntervalMs = 2000,
-}: RunBoardSessionOptions): Promise<string> {
+}: RunBoardSessionOptions): Promise<BoardResult> {
   const workflow = `${baseUrl}/api/workflows/boardSession`;
 
   const { runId } = await asJson<{ runId: string }>(
@@ -88,11 +107,15 @@ export async function runBoardSession({
     const status = snapshot.status;
 
     if (status === "success") {
-      const transcript = snapshot.result?.transcript;
+      const { transcript, personas, rebuttalsMarkdown } = snapshot.result ?? {};
       if (!transcript) {
         throw new Error("Board run succeeded but returned no transcript.");
       }
-      return transcript;
+      return {
+        transcript,
+        personas: personas ?? [],
+        rebuttalsMarkdown: rebuttalsMarkdown ?? "",
+      };
     }
 
     if (status === "failed" || status === "canceled") {

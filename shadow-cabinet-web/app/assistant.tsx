@@ -5,7 +5,6 @@ import {
   useChatRuntime,
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -25,7 +24,10 @@ import {
 
 export const Assistant = ({ threadId }: { threadId: string }) => {
   const runtime = useChatRuntime({
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // No `sendAutomaticallyWhen`: the grounding tools run server-side inside the
+    // workflow, so a reply carrying finished tool calls is the final answer.
+    // Auto-sending on complete tool calls would fire a fresh board session after
+    // every response — eight agent calls a time, forever.
     transport: new AssistantChatTransport({
       api: "/api/chat",
       // The board thread is what makes the conversation resumable.

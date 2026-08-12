@@ -16,12 +16,67 @@ const boardInputSchema = z.object({
   threadId: z.string().min(1),
 });
 
+/**
+ * One grounding tool call an agent made while writing its opening. The UI
+ * renders these as the evidence behind a persona's numbers, so the call has to
+ * survive as workflow output — the browser never sees the agent's own stream.
+ */
+const evidenceSchema = z.object({
+  toolCallId: z.string(),
+  toolName: z.string(),
+  input: z.record(z.string(), z.unknown()),
+  output: z.unknown(),
+});
+
 const openingEntrySchema = z.object({
   personaId: personaIdSchema,
   text: z.string(),
+  evidence: z.array(evidenceSchema),
   question: z.string(),
   threadId: z.string(),
 });
+
+const personaTurnSchema = z.object({
+  personaId: personaIdSchema,
+  text: z.string(),
+  evidence: z.array(evidenceSchema),
+});
+
+interface ToolCallEnvelope {
+  payload?: {
+    toolCallId?: string;
+    toolName?: string;
+    args?: unknown;
+    result?: unknown;
+  };
+}
+
+/** Pairs Mastra's separate toolCalls/toolResults arrays back into one record. */
+function collectEvidence(response: {
+  toolCalls?: readonly ToolCallEnvelope[];
+  toolResults?: readonly ToolCallEnvelope[];
+}): Array<z.infer<typeof evidenceSchema>> {
+  const outputs = new Map<string, unknown>();
+  for (const entry of response.toolResults ?? []) {
+    if (entry.payload?.toolCallId) {
+      outputs.set(entry.payload.toolCallId, entry.payload.result);
+    }
+  }
+
+  return (response.toolCalls ?? []).flatMap((entry) => {
+    const { toolCallId, toolName, args } = entry.payload ?? {};
+    if (!toolCallId || !toolName) return [];
+
+    return [
+      {
+        toolCallId,
+        toolName,
+        input: (args ?? {}) as Record<string, unknown>,
+        output: outputs.get(toolCallId) ?? null,
+      },
+    ];
+  });
+}
 
 const rebuttalEntrySchema = z.object({
   personaId: personaIdSchema,
@@ -32,6 +87,7 @@ const rebuttalEntrySchema = z.object({
   // `workflowRoute` does not forward writer output, so the transcript has to
   // survive as workflow output rather than as stream text.
   openingsMarkdown: z.string(),
+  personas: z.array(personaTurnSchema),
 });
 
 /** The shape pass two asks each persona to return. */
@@ -64,7 +120,13 @@ const openingStep = createStep({
       memory: { resource: "ceo", thread: threadId },
     });
 
-    return { personaId, text: response.text, question, threadId };
+    return {
+      personaId,
+      text: response.text,
+      evidence: collectEvidence(response),
+      question,
+      threadId,
+    };
   },
 });
 
@@ -76,11 +138,18 @@ const renderOpeningsStep = createStep({
     threadId: z.string(),
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
     openingsMarkdown: z.string(),
+    personas: z.array(personaTurnSchema),
   }),
   execute: async ({ inputData, writer }) => {
     const openings: OpeningEntry[] = inputData.map((entry) => ({
       personaId: entry.personaId,
       text: entry.text,
+    }));
+
+    const personas = inputData.map((entry) => ({
+      personaId: entry.personaId,
+      text: entry.text,
+      evidence: entry.evidence,
     }));
 
     // Stream the whole round at once so the sections cannot interleave.
@@ -92,6 +161,7 @@ const renderOpeningsStep = createStep({
       threadId: inputData[0].threadId,
       openings,
       openingsMarkdown,
+      personas,
     };
   },
 });
@@ -105,10 +175,12 @@ const rebuttalStep = createStep({
     threadId: z.string(),
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
     openingsMarkdown: z.string(),
+    personas: z.array(personaTurnSchema),
   }),
   outputSchema: rebuttalEntrySchema,
   execute: async ({ inputData, mastra }) => {
-    const { personaId, question, threadId, openings, openingsMarkdown } = inputData;
+    const { personaId, question, threadId, openings, openingsMarkdown, personas } =
+      inputData;
     const agent = mastra.getAgentById(`${personaId}-agent`);
 
     const others = formatOpeningsForRebuttal(openings, personaId);
@@ -136,28 +208,42 @@ citing figures you have fetched.`,
       statement: "",
     };
 
-    return { personaId, ...verdict, openingsMarkdown };
+    return { personaId, ...verdict, openingsMarkdown, personas };
   },
 });
 
 const renderRebuttalsStep = createStep({
   id: "render-rebuttals",
   inputSchema: z.array(rebuttalEntrySchema),
-  outputSchema: z.object({ transcript: z.string() }),
+  outputSchema: z.object({
+    transcript: z.string(),
+    personas: z.array(personaTurnSchema),
+    rebuttalsMarkdown: z.string(),
+  }),
   execute: async ({ inputData, writer }) => {
     const markdown = renderRebuttalRound(inputData);
     await writer?.write(`\n${markdown}`);
 
     // Both rounds, in one string: the workflow's own output is the only place
-    // the client can read the transcript from.
-    return { transcript: `${inputData[0].openingsMarkdown}\n${markdown}` };
+    // the client can read the transcript from. `personas` carries the same
+    // openings split per agent, with the grounding calls each one made, so the
+    // UI can render one message per executive instead of one merged answer.
+    return {
+      transcript: `${inputData[0].openingsMarkdown}\n${markdown}`,
+      personas: inputData[0].personas,
+      rebuttalsMarkdown: markdown,
+    };
   },
 });
 
 export const boardSessionWorkflow = createWorkflow({
   id: "boardSession",
   inputSchema: boardInputSchema,
-  outputSchema: z.object({ transcript: z.string() }),
+  outputSchema: z.object({
+    transcript: z.string(),
+    personas: z.array(personaTurnSchema),
+    rebuttalsMarkdown: z.string(),
+  }),
 })
   // Fan the question out to all four personas.
   .map(async ({ inputData }) =>
@@ -177,6 +263,7 @@ export const boardSessionWorkflow = createWorkflow({
       threadId: inputData.threadId,
       openings: inputData.openings,
       openingsMarkdown: inputData.openingsMarkdown,
+      personas: inputData.personas,
     })),
   )
   .foreach(rebuttalStep, { concurrency: 4 })
