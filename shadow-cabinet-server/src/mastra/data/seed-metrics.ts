@@ -1,4 +1,5 @@
 import { MongoClient } from "mongodb";
+import type { MetricDocument } from "../schemas/metric-schema";
 
 /**
  * Seeds the metrics collection the get-metric tool reads.
@@ -7,7 +8,7 @@ import { MongoClient } from "mongodb";
  * Q3 2026 gross margin is 4 points below Q2, which is the scenario the board
  * is built to argue about.
  */
-const METRICS = [
+const METRICS: MetricDocument[] = [
   { name: "revenue", period: "Q2 2026", value: 43500, unit: "USD thousands", source: "Q2 2026 P&L" },
   { name: "revenue", period: "Q3 2026", value: 47900, unit: "USD thousands", source: "Q3 2026 P&L" },
   { name: "gross_margin", period: "Q2 2026", value: 62, unit: "percent", source: "Q2 2026 P&L" },
