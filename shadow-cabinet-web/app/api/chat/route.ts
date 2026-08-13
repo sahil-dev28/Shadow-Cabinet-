@@ -1,12 +1,18 @@
 import type { UIMessage } from "ai";
 
-import { type BoardResult, runBoardSession } from "@/lib/board";
+import {
+  type BoardResult,
+  type CeoQuestion,
+  runBoardSession,
+} from "@/lib/board";
 import { personaHeading } from "@/lib/personas";
 
 const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
-// Eight agent calls with tool use. A contested board takes minutes, not seconds.
-export const maxDuration = 300;
+// A contested board is nine agent calls with tool use; answering a paused one
+// adds a revision round on top and has measured over nine minutes. Serverless
+// platforms cap well below this — see the README on running the board.
+export const maxDuration = 800;
 
 function lastUserText(messages: UIMessage[]): string {
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
@@ -62,6 +68,42 @@ function writeOpenings(write: Write, personas: BoardResult["personas"]): void {
   }
 }
 
+/** The board halted: name who asked what, so the pause never looks like a stall. */
+function waitingMarkdown(questions: CeoQuestion[]): string {
+  const asks = questions
+    .map((q) => `**${q.personaId.toUpperCase()} asks:** ${q.question}`)
+    .join("\n\n");
+
+  return `\n## The board is waiting on you\n\n${asks}\n\nAnswer in the box below and the board resumes where it stopped.\n`;
+}
+
+/**
+ * Deliberately not fault-tolerant: if we cannot tell whether the board is
+ * halted, guessing "not halted" convenes a second board on the same thread and
+ * strands the first mid-question. Failing here is the cheaper mistake.
+ */
+async function pendingRunId(
+  threadId: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const response = await fetch(`${MASTRA_API_URL}/board/${threadId}/messages`, {
+    cache: "no-store",
+    signal,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => response.statusText);
+    throw new Error(
+      `Could not read board state (${response.status}): ${detail}`,
+    );
+  }
+
+  const { pending } = (await response.json()) as {
+    pending?: { runId?: string } | null;
+  };
+  return pending?.runId;
+}
+
 export async function POST(req: Request) {
   const { messages, threadId }: { messages: UIMessage[]; threadId?: string } =
     await req.json();
@@ -86,25 +128,35 @@ export async function POST(req: Request) {
       let openingsSent = false;
 
       try {
+        const resumeRunId = await pendingRunId(threadId, req.signal);
+
         const board = await runBoardSession({
           baseUrl: MASTRA_API_URL,
           question,
           threadId,
           signal: req.signal,
+          resumeRunId,
           onRoundOne: (personas) => {
             openingsSent = true;
             writeOpenings(write, personas);
           },
         });
 
-        // A run that finishes between polls never fires the callback.
-        if (!openingsSent) writeOpenings(write, board.personas);
-
-        if (board.rebuttalsMarkdown.trim()) {
-          const id = "board-rebuttals";
+        if (board.status === "waiting") {
+          const id = "board-waiting";
           write({ type: "text-start", id });
-          write({ type: "text-delta", id, delta: `\n${board.rebuttalsMarkdown}` });
+          write({ type: "text-delta", id, delta: waitingMarkdown(board.questions) });
           write({ type: "text-end", id });
+        } else {
+          // A run that finishes between polls never fires the callback.
+          if (!openingsSent) writeOpenings(write, board.personas);
+
+          if (board.rebuttalsMarkdown.trim()) {
+            const id = "board-rebuttals";
+            write({ type: "text-start", id });
+            write({ type: "text-delta", id, delta: `\n${board.rebuttalsMarkdown}` });
+            write({ type: "text-end", id });
+          }
         }
       } catch (error) {
         // Reported in-stream rather than as a status code: by the time a board

@@ -13,6 +13,8 @@ export interface RunBoardSessionOptions {
    * arguing instead of watching a spinner for the whole run.
    */
   onRoundOne?: (personas: BoardPersonaTurn[]) => void;
+  /** Set when the board is halted on a CEO question and this is the answer. */
+  resumeRunId?: string;
 }
 
 export interface BoardEvidence {
@@ -34,11 +36,28 @@ export interface BoardResult {
   rebuttalsMarkdown: string;
 }
 
+export interface CeoQuestion {
+  personaId: string;
+  question: string;
+}
+
+/** A board either finishes, or halts waiting on the CEO. */
+export type BoardOutcome =
+  | ({ status: "complete" } & BoardResult)
+  | { status: "waiting"; questions: CeoQuestion[] };
+
 interface RunSnapshot {
   status?: string;
   result?: Partial<BoardResult>;
   error?: unknown;
-  steps?: Record<string, { status?: string; output?: { personas?: BoardPersonaTurn[] } }>;
+  steps?: Record<
+    string,
+    {
+      status?: string;
+      output?: { personas?: BoardPersonaTurn[] };
+      suspendPayload?: { questions?: CeoQuestion[] };
+    }
+  >;
 }
 
 /**
@@ -72,33 +91,60 @@ export async function runBoardSession({
   fetchImpl = fetch,
   pollIntervalMs = 2000,
   onRoundOne,
-}: RunBoardSessionOptions): Promise<BoardResult> {
+  resumeRunId,
+}: RunBoardSessionOptions): Promise<BoardOutcome> {
   const workflow = `${baseUrl}/api/workflows/boardSession`;
 
-  const { runId } = await asJson<{ runId: string }>(
-    await fetchImpl(`${workflow}/create-run`, {
+  let runId = resumeRunId ?? "";
+
+  if (resumeRunId) {
+    // The board is mid-session, halted on a question: this message is the
+    // answer, not a new question.
+    const resumed = await fetchImpl(`${workflow}/resume?runId=${resumeRunId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({
+        step: "ceo-question",
+        resumeData: { answer: question },
+      }),
       signal,
-    }),
-    "create-run",
-  );
+    });
 
-  // Returns once scheduled; the board keeps working after this response closes.
-  const started = await fetchImpl(`${workflow}/start?runId=${runId}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ inputData: { question, threadId } }),
-    signal,
-  });
+    if (!resumed.ok) {
+      const detail = await resumed.text().catch(() => resumed.statusText);
+      throw new Error(`Board resume returned ${resumed.status}: ${detail}`);
+    }
+  } else {
+    ({ runId } = await asJson<{ runId: string }>(
+      await fetchImpl(`${workflow}/create-run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal,
+      }),
+      "create-run",
+    ));
 
-  if (!started.ok) {
-    const detail = await started.text().catch(() => started.statusText);
-    throw new Error(`Board start returned ${started.status}: ${detail}`);
+    // Returns once scheduled; the board keeps working after this response closes.
+    const started = await fetchImpl(`${workflow}/start?runId=${runId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inputData: { question, threadId } }),
+      signal,
+    });
+
+    if (!started.ok) {
+      const detail = await started.text().catch(() => started.statusText);
+      throw new Error(`Board start returned ${started.status}: ${detail}`);
+    }
   }
 
-  let roundOneSent = false;
+  // Resuming: the openings already on screen are the pre-answer ones, and the
+  // run reports `suspended` until it picks the answer up, so neither signal
+  // means what it does on a fresh start.
+  const resuming = Boolean(resumeRunId);
+  let roundOneSent = resuming;
+  let leftSuspended = !resuming;
 
   for (;;) {
     signal?.throwIfAborted();
@@ -117,6 +163,15 @@ export async function runBoardSession({
     }
 
     const status = snapshot.status;
+    if (status && status !== "suspended") leftSuspended = true;
+
+    if (status === "suspended" && leftSuspended) {
+      return {
+        status: "waiting",
+        questions:
+          snapshot.steps?.["ceo-question"]?.suspendPayload?.questions ?? [],
+      };
+    }
 
     if (status === "success") {
       const { transcript, personas, rebuttalsMarkdown } = snapshot.result ?? {};
@@ -124,6 +179,7 @@ export async function runBoardSession({
         throw new Error("Board run succeeded but returned no transcript.");
       }
       return {
+        status: "complete",
         transcript,
         personas: personas ?? [],
         rebuttalsMarkdown: rebuttalsMarkdown ?? "",

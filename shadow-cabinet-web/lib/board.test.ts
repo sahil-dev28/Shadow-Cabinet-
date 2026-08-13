@@ -80,6 +80,7 @@ describe("runBoardSession", () => {
       pollIntervalMs: 0,
     });
 
+    if (board.status !== "complete") throw new Error("expected a completed board");
     expect(board.transcript).toBe("## Opening statements\n");
     // Each persona keeps its own grounding calls, which is what lets the UI
     // collapse one executive's evidence without folding in the others'.
@@ -169,6 +170,114 @@ describe("runBoardSession", () => {
 
     // Once, on the poll that first exposes it — not again when the run ends.
     expect(seen).toEqual([["cfo", "cmo"]]);
+  });
+
+  it("reports a halted board with the questions it is waiting on", async () => {
+    const impl = async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/create-run")) {
+        return new Response(JSON.stringify({ runId: "run-1" }), { status: 200 });
+      }
+      if (href.includes("/start")) return new Response("{}", { status: 200 });
+
+      return new Response(
+        JSON.stringify({
+          status: "suspended",
+          steps: {
+            "ceo-question": {
+              status: "suspended",
+              suspendPayload: {
+                questions: [{ personaId: "cfo", question: "What is the budget?" }],
+              },
+            },
+          },
+        }),
+        { status: 200 },
+      );
+    };
+
+    const board = await runBoardSession({
+      baseUrl: "http://board",
+      question: "Should we cut spend?",
+      threadId: "board-1",
+      fetchImpl: impl,
+      pollIntervalMs: 0,
+    });
+
+    expect(board).toEqual({
+      status: "waiting",
+      questions: [{ personaId: "cfo", question: "What is the budget?" }],
+    });
+  });
+
+  it("resumes a halted board instead of starting a new one", async () => {
+    const calls: string[] = [];
+    const impl = async (url: string | URL, init?: RequestInit) => {
+      const href = String(url).replace("http://board", "");
+      calls.push(`${init?.method ?? "GET"} ${href}`);
+
+      if (href.includes("/resume")) return new Response("{}", { status: 200 });
+
+      return new Response(
+        JSON.stringify({
+          status: "success",
+          result: { transcript: "t", personas: [], rebuttalsMarkdown: "r" },
+        }),
+        { status: 200 },
+      );
+    };
+
+    await runBoardSession({
+      baseUrl: "http://board",
+      question: "Budget is 2 million.",
+      threadId: "board-1",
+      fetchImpl: impl,
+      pollIntervalMs: 0,
+      resumeRunId: "run-9",
+    });
+
+    expect(calls[0]).toBe("POST /api/workflows/boardSession/resume?runId=run-9");
+    expect(calls.some((c) => c.includes("create-run"))).toBe(false);
+  });
+
+  it("does not re-report waiting while a resumed run is still picking up", async () => {
+    let polls = 0;
+    const impl = async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/resume")) return new Response("{}", { status: 200 });
+
+      polls += 1;
+      // Resume is asynchronous: the run reads as suspended for a moment.
+      return new Response(
+        JSON.stringify(
+          polls < 3
+            ? {
+                status: "suspended",
+                steps: {
+                  "ceo-question": {
+                    suspendPayload: { questions: [{ personaId: "cfo", question: "?" }] },
+                  },
+                },
+              }
+            : {
+                status: "success",
+                result: { transcript: "t", personas: [], rebuttalsMarkdown: "r" },
+              },
+        ),
+        { status: 200 },
+      );
+    };
+
+    const board = await runBoardSession({
+      baseUrl: "http://board",
+      question: "Budget is 2 million.",
+      threadId: "board-1",
+      fetchImpl: impl,
+      pollIntervalMs: 0,
+      resumeRunId: "run-9",
+    });
+
+    expect(board.status).toBe("complete");
   });
 
   it("reports a failed run instead of hanging", async () => {

@@ -1,6 +1,7 @@
 import { registerApiRoute } from "@mastra/core/server";
 
 import { listBoardSessions } from "../data/board-sessions.ts";
+import { getPendingRun } from "../data/pending-runs.ts";
 
 /**
  * Board history for one thread, as the CEO saw it: the question, each
@@ -14,7 +15,10 @@ export const boardHistoryRoute = registerApiRoute("/board/:threadId/messages", {
   method: "GET",
   handler: async (c) => {
     const threadId = c.req.param("threadId");
-    const sessions = await listBoardSessions(threadId);
+    const [sessions, pending] = await Promise.all([
+      listBoardSessions(threadId),
+      getPendingRun(threadId),
+    ]);
 
     return c.json({
       sessions: sessions.map(({ question, personas, rebuttalsMarkdown }) => ({
@@ -22,6 +26,8 @@ export const boardHistoryRoute = registerApiRoute("/board/:threadId/messages", {
         personas,
         rebuttalsMarkdown,
       })),
+      // Set while the board is halted waiting on the CEO.
+      pending,
     });
   },
 });
