@@ -1,28 +1,27 @@
 import { registerApiRoute } from "@mastra/core/server";
 
+import { listBoardSessions } from "../data/board-sessions.ts";
+
 /**
- * Message history for one board thread. All personas share the thread, so any
- * one agent's memory handle reads the same transcript.
+ * Board history for one thread, as the CEO saw it: the question, each
+ * executive's opening with the lookups behind it, and the debate round.
+ *
+ * Deliberately not the agent thread. That stores every internal prompt as a
+ * user turn — one question appears four times, once per persona — so replaying
+ * it would show the plumbing rather than the board.
  */
 export const boardHistoryRoute = registerApiRoute("/board/:threadId/messages", {
   method: "GET",
-  createHandler: async ({ mastra }) => {
-    return async (c) => {
-      const threadId = c.req.param("threadId");
-      const agent = mastra.getAgentById("cfo-agent");
-      const memory = await agent.getMemory();
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const sessions = await listBoardSessions(threadId);
 
-      if (!memory) {
-        return c.json({ messages: [] });
-      }
-
-      const thread = await memory.getThreadById({ threadId });
-      if (!thread) {
-        return c.json({ messages: [] });
-      }
-
-      const { messages } = await memory.recall({ threadId, perPage: false });
-      return c.json({ messages });
-    };
+    return c.json({
+      sessions: sessions.map(({ question, personas, rebuttalsMarkdown }) => ({
+        question,
+        personas,
+        rebuttalsMarkdown,
+      })),
+    });
   },
 });

@@ -2,6 +2,7 @@ import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
 import { PERSONA_IDS, type PersonaId } from "../agents/index.ts";
+import { saveBoardSession } from "../data/board-sessions.ts";
 import {
   type OpeningEntry,
   formatOpeningsForRebuttal,
@@ -100,6 +101,8 @@ const rebuttalEntrySchema = z.object({
   // output, so the transcript survives as workflow output, not stream text.
   openingsMarkdown: z.string(),
   personas: z.array(personaTurnSchema),
+  question: z.string(),
+  threadId: z.string(),
 });
 
 /** The shape pass two asks each persona to return. */
@@ -223,7 +226,7 @@ citing figures you have fetched.`,
       ? { disagrees: true, with: [] as PersonaId[], statement: blocked }
       : (response.object ?? { disagrees: false, with: [], statement: "" });
 
-    return { personaId, ...verdict, openingsMarkdown, personas };
+    return { personaId, ...verdict, openingsMarkdown, personas, question, threadId };
   },
 });
 
@@ -238,6 +241,15 @@ const renderRebuttalsStep = createStep({
   execute: async ({ inputData, writer }) => {
     const markdown = renderRebuttalRound(inputData);
     await writer?.write(`\n${markdown}`);
+
+    // Persisted as the CEO saw it, so reopening the thread replays the board
+    // rather than the agents' internal prompts.
+    await saveBoardSession({
+      threadId: inputData[0].threadId,
+      question: inputData[0].question,
+      personas: inputData[0].personas,
+      rebuttalsMarkdown: markdown,
+    });
 
     // `transcript` is both rounds merged; `personas` is the same openings split
     // per agent so the UI can render each executive with its own evidence.

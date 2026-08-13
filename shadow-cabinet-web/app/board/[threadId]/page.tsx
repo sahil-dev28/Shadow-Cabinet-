@@ -1,4 +1,7 @@
 import { Assistant } from "@/app/assistant";
+import { fetchBoardHistory } from "@/lib/history";
+
+const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
 export default async function BoardPage({
   params,
@@ -6,6 +9,7 @@ export default async function BoardPage({
   params: Promise<{ threadId: string }>;
 }) {
   const { threadId } = await params;
+  const initialMessages = await fetchBoardHistory(MASTRA_API_URL, threadId);
 
-  return <Assistant threadId={threadId} />;
+  return <Assistant threadId={threadId} initialMessages={initialMessages} />;
 }

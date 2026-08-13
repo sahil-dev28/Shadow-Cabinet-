@@ -1,5 +1,6 @@
 "use client";
 
+import type { UIMessage } from "ai";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   useChatRuntime,
@@ -22,8 +23,15 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 
-export const Assistant = ({ threadId }: { threadId: string }) => {
+export const Assistant = ({
+  threadId,
+  initialMessages = [],
+}: {
+  threadId: string;
+  initialMessages?: UIMessage[];
+}) => {
   const runtime = useChatRuntime({
+    messages: initialMessages,
     // No `sendAutomaticallyWhen`: tools run server-side, so a reply carrying
     // finished tool calls is the final answer. Auto-sending on complete tool
     // calls would fire a fresh board session after every response, forever.

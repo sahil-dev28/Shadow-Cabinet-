@@ -1,13 +1,7 @@
 import type { UIMessage } from "ai";
 
 import { type BoardResult, runBoardSession } from "@/lib/board";
-
-const PERSONA_TITLES: Record<string, string> = {
-  cfo: "Chief Financial Officer",
-  cmo: "Chief Marketing Officer",
-  coo: "Chief Operating Officer",
-  cso: "Chief Strategy Officer",
-};
+import { personaHeading } from "@/lib/personas";
 
 const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
@@ -51,7 +45,6 @@ function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
 
       for (const persona of board.personas) {
         const id = `${persona.personaId}-opening`;
-        const title = PERSONA_TITLES[persona.personaId] ?? persona.personaId;
 
         // Evidence precedes the position it supports.
         for (const call of persona.evidence) {
@@ -72,7 +65,7 @@ function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
         write(controller, {
           type: "text-delta",
           id,
-          delta: `### ${persona.personaId.toUpperCase()} — ${title}\n\n${persona.text.trim()}\n`,
+          delta: `${personaHeading(persona.personaId)}\n\n${persona.text.trim()}\n`,
         });
         write(controller, { type: "text-end", id });
       }
