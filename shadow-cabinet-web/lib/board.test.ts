@@ -125,6 +125,52 @@ describe("runBoardSession", () => {
     ).rejects.toThrow(/status is missing/);
   });
 
+  it("hands over the opening round before the run finishes", async () => {
+    const openings = [
+      { personaId: "cfo", text: "Margin is down.", evidence: [] },
+      { personaId: "cmo", text: "Protect demand.", evidence: [] },
+    ];
+    let polls = 0;
+
+    const impl = async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/create-run")) {
+        return new Response(JSON.stringify({ runId: "run-1" }), { status: 200 });
+      }
+      if (href.includes("/start")) return new Response("{}", { status: 200 });
+
+      polls += 1;
+      // Round one lands on the second poll; the run finishes on the third.
+      return new Response(
+        JSON.stringify({
+          status: polls >= 3 ? "success" : "running",
+          steps:
+            polls >= 2
+              ? { "render-openings": { status: "success", output: { personas: openings } } }
+              : {},
+          result:
+            polls >= 3
+              ? { transcript: "t", personas: openings, rebuttalsMarkdown: "r" }
+              : undefined,
+        }),
+        { status: 200 },
+      );
+    };
+
+    const seen: string[][] = [];
+    await runBoardSession({
+      baseUrl: "http://board",
+      question: "Why did margin fall?",
+      threadId: "board-1",
+      fetchImpl: impl,
+      pollIntervalMs: 0,
+      onRoundOne: (personas) => seen.push(personas.map((p) => p.personaId)),
+    });
+
+    // Once, on the poll that first exposes it — not again when the run ends.
+    expect(seen).toEqual([["cfo", "cmo"]]);
+  });
+
   it("reports a failed run instead of hanging", async () => {
     const { impl } = fakeFetch(["running", "failed"]);
 

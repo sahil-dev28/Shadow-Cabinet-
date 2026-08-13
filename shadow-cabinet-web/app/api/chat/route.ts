@@ -31,62 +31,35 @@ function sse(event: unknown): string {
  * `groupPartByType` groups consecutive parts, so each persona still collapses
  * separately as long as its text sits between its calls and the next persona's.
  */
-function boardStream(board: BoardResult): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
+type Write = (event: unknown) => void;
 
-  const write = (
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    event: unknown,
-  ) => controller.enqueue(encoder.encode(sse(event)));
+function writeOpenings(write: Write, personas: BoardResult["personas"]): void {
+  for (const persona of personas) {
+    const id = `${persona.personaId}-opening`;
 
-  return new ReadableStream({
-    start(controller) {
-      write(controller, { type: "start", messageId: "board-session" });
+    // Evidence precedes the position it supports.
+    for (const call of persona.evidence) {
+      write({
+        type: "tool-input-available",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        input: call.input,
+      });
+      write({
+        type: "tool-output-available",
+        toolCallId: call.toolCallId,
+        output: call.output,
+      });
+    }
 
-      for (const persona of board.personas) {
-        const id = `${persona.personaId}-opening`;
-
-        // Evidence precedes the position it supports.
-        for (const call of persona.evidence) {
-          write(controller, {
-            type: "tool-input-available",
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            input: call.input,
-          });
-          write(controller, {
-            type: "tool-output-available",
-            toolCallId: call.toolCallId,
-            output: call.output,
-          });
-        }
-
-        write(controller, { type: "text-start", id });
-        write(controller, {
-          type: "text-delta",
-          id,
-          delta: `${personaHeading(persona.personaId)}\n\n${persona.text.trim()}\n`,
-        });
-        write(controller, { type: "text-end", id });
-      }
-
-      // No tool parts here, so the debate round renders expanded per the spec.
-      if (board.rebuttalsMarkdown.trim()) {
-        const id = "board-rebuttals";
-        write(controller, { type: "text-start", id });
-        write(controller, {
-          type: "text-delta",
-          id,
-          delta: `\n${board.rebuttalsMarkdown}`,
-        });
-        write(controller, { type: "text-end", id });
-      }
-
-      write(controller, { type: "finish" });
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    },
-  });
+    write({ type: "text-start", id });
+    write({
+      type: "text-delta",
+      id,
+      delta: `${personaHeading(persona.personaId)}\n\n${persona.text.trim()}\n`,
+    });
+    write({ type: "text-end", id });
+  }
 }
 
 export async function POST(req: Request) {
@@ -101,23 +74,55 @@ export async function POST(req: Request) {
     return Response.json({ error: "Missing threadId." }, { status: 400 });
   }
 
-  let board: BoardResult;
-  try {
-    board = await runBoardSession({
-      baseUrl: MASTRA_API_URL,
-      question,
-      threadId,
-      signal: req.signal,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return Response.json(
-      { error: `Board session failed (${MASTRA_API_URL}): ${message}` },
-      { status: 502 },
-    );
-  }
+  const encoder = new TextEncoder();
 
-  return new Response(boardStream(board), {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const write: Write = (event) =>
+        controller.enqueue(encoder.encode(sse(event)));
+
+      write({ type: "start", messageId: "board-session" });
+
+      let openingsSent = false;
+
+      try {
+        const board = await runBoardSession({
+          baseUrl: MASTRA_API_URL,
+          question,
+          threadId,
+          signal: req.signal,
+          onRoundOne: (personas) => {
+            openingsSent = true;
+            writeOpenings(write, personas);
+          },
+        });
+
+        // A run that finishes between polls never fires the callback.
+        if (!openingsSent) writeOpenings(write, board.personas);
+
+        if (board.rebuttalsMarkdown.trim()) {
+          const id = "board-rebuttals";
+          write({ type: "text-start", id });
+          write({ type: "text-delta", id, delta: `\n${board.rebuttalsMarkdown}` });
+          write({ type: "text-end", id });
+        }
+      } catch (error) {
+        // Reported in-stream rather than as a status code: by the time a board
+        // fails, the opening round may already be on screen.
+        const message = error instanceof Error ? error.message : String(error);
+        write({
+          type: "error",
+          errorText: `Board session failed (${MASTRA_API_URL}): ${message}`,
+        });
+      }
+
+      write({ type: "finish" });
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
     status: 200,
     headers: {
       "Content-Type": "text/event-stream",

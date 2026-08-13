@@ -7,6 +7,12 @@ export interface RunBoardSessionOptions {
   signal?: AbortSignal;
   fetchImpl?: FetchImpl;
   pollIntervalMs?: number;
+  /**
+   * Fires as soon as the opening round is readable, roughly a third of the way
+   * into a session, so the CEO reads four positions while the board is still
+   * arguing instead of watching a spinner for the whole run.
+   */
+  onRoundOne?: (personas: BoardPersonaTurn[]) => void;
 }
 
 export interface BoardEvidence {
@@ -32,6 +38,7 @@ interface RunSnapshot {
   status?: string;
   result?: Partial<BoardResult>;
   error?: unknown;
+  steps?: Record<string, { status?: string; output?: { personas?: BoardPersonaTurn[] } }>;
 }
 
 /**
@@ -64,6 +71,7 @@ export async function runBoardSession({
   signal,
   fetchImpl = fetch,
   pollIntervalMs = 2000,
+  onRoundOne,
 }: RunBoardSessionOptions): Promise<BoardResult> {
   const workflow = `${baseUrl}/api/workflows/boardSession`;
 
@@ -90,6 +98,8 @@ export async function runBoardSession({
     throw new Error(`Board start returned ${started.status}: ${detail}`);
   }
 
+  let roundOneSent = false;
+
   for (;;) {
     signal?.throwIfAborted();
 
@@ -99,6 +109,12 @@ export async function runBoardSession({
         "run status",
       ),
     );
+
+    const openings = snapshot.steps?.["render-openings"]?.output?.personas;
+    if (!roundOneSent && openings?.length) {
+      roundOneSent = true;
+      onRoundOne?.(openings);
+    }
 
     const status = snapshot.status;
 
