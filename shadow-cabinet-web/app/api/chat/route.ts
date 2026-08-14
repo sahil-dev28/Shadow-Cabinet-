@@ -104,6 +104,28 @@ async function pendingRunId(
   return pending?.runId;
 }
 
+/**
+ * A board session is nine agent calls and several minutes, so a greeting gets a
+ * direct reply instead. Skipped while a board is halted mid-question: whatever
+ * the CEO types then is the answer, however short.
+ */
+async function reception(
+  question: string,
+  signal: AbortSignal,
+): Promise<{ convene: boolean; reply: string }> {
+  const response = await fetch(`${MASTRA_API_URL}/board/reception`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+    cache: "no-store",
+    signal,
+  });
+
+  if (!response.ok) return { convene: true, reply: "" };
+
+  return (await response.json()) as { convene: boolean; reply: string };
+}
+
 export async function POST(req: Request) {
   const { messages, threadId }: { messages: UIMessage[]; threadId?: string } =
     await req.json();
@@ -129,6 +151,21 @@ export async function POST(req: Request) {
 
       try {
         const resumeRunId = await pendingRunId(threadId, req.signal);
+
+        if (!resumeRunId) {
+          const { convene, reply } = await reception(question, req.signal);
+
+          if (!convene && reply.trim()) {
+            const id = "board-reception";
+            write({ type: "text-start", id });
+            write({ type: "text-delta", id, delta: reply });
+            write({ type: "text-end", id });
+            write({ type: "finish" });
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+            return;
+          }
+        }
 
         const board = await runBoardSession({
           baseUrl: MASTRA_API_URL,
