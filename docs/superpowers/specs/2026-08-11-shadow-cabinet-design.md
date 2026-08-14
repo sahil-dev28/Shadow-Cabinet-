@@ -141,6 +141,15 @@ The whole board stopping is the point, not a limitation. This is what a real
 boardroom does when someone asks the chair a question, everyone waits. The
 UI is what carries that, see below.
 
+**A CEO's answer is scoped to the thread that asked for it.** It lives in
+that thread's shared memory and nowhere else. A later thread that needs the
+same figure asks again rather than reusing it. Promoting spoken answers into
+durable company facts would mean holding two sources of truth, the uploaded
+dataset and things the CEO once said, plus rules for what happens when a new
+upload contradicts an older answer. That is real work with no payoff at
+prototype scope, so it belongs in the write up as a production extension
+rather than in this build.
+
 ## Grounding
 
 P&L figures and KPIs are uploaded as CSV or JSON and loaded into MongoDB
@@ -291,5 +300,4 @@ to match, not by pointing the built in feature at it.
 
 ## Open Questions
 
-- Whether a CEO answer to an interrupt should be stored as a durable company
-  fact, available to later threads, or scoped only to the thread that asked
+None outstanding.
