@@ -48,6 +48,13 @@ Debate happens in exactly three rounds, closed by a chair. Three is a hard
 limit, not a starting point, so a disagreement cannot loop without
 resolution.
 
+**Not every message convenes the board.** A greeting, a thank you, or a
+question about the app itself is answered directly by a cheap model in seconds.
+The board is nine agent calls and several minutes; spending that on "hi" reads
+as broken. The gate fails open — an unreadable classification convenes, because
+a slow answer beats refusing a real question — and it is skipped entirely while
+a board is halted, where whatever the CEO types is the answer however short.
+
 **Round one.** The CEO's question goes to all four agents concurrently. Each
 responds using its own persona and the grounding data it pulls itself. The
 shared thread means each agent sees the full history of *earlier* turns,
@@ -125,10 +132,10 @@ arguing with each other, not gathering information, and allowing an
 interrupt there means the board could stall the CEO two or three times on a
 single question.
 
-When any agent raises a question, the entire board stops. Agents still
-mid-response are not shown; the session halts as one. If more than one agent
-raises a question in round one, they are batched into a single interrupt
-rather than surfaced one at a time. The thread status becomes
+Round one completes for all four agents before their questions are collected,
+so the halt lands between rounds rather than mid-response, and nothing from
+round two starts. If more than one agent raises a question, they are batched
+into a single interrupt rather than surfaced one at a time. The thread status becomes
 `waiting_on_ceo` and the pending question or questions are stored on the
 thread.
 
@@ -216,18 +223,14 @@ depends on which one is used.
   upload endpoint live. No Express. A second process would need its own
   port, its own Mongo client, and its own copy of the agent context, all
   to re-expose what Mastra already exposes
-- **Database:** MongoDB via `@mastra/mongodb`, board threads and uploaded
-  P&L/KPI data
+- **Database:** MongoDB via `@mastra/mongodb`, board threads only. Uploaded
+  P&L/KPI data is a gitignored JSON file beside the seed dataset, see Grounding
 - **Frontend:** Next.js with assistant-ui, `useChatRuntime` from
   `@assistant-ui/react-ai-sdk` bridged to Mastra's agent stream through
   `@mastra/ai-sdk`
 - **LLM provider:** Anthropic
 
 ## UI
-
-CFO built first end to end, persona, tool calling, streaming, saved to
-Mongo, then CMO, COO, CSO reuse that same pipeline with new prompts and
-tools rather than new plumbing.
 
 **The answer leads.** The chair's single answer is the primary content of
 every board response. Directly beneath it sits the debate, three labelled
