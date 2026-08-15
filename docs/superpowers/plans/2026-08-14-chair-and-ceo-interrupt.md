@@ -58,6 +58,9 @@ following the code blocks literally would delete tested behaviour.
 | Uploads validated with `companyDataSchema` at `POST /company-data` | `8f9e745` | Unrelated to these tasks; do not remove |
 | Round three shipped with narrower carried schemas than this plan drafted | `a49968c` | **Task 4 must use `objectionSchema` and `replyTurnSchema`**, not `rebuttalEntrySchema` and `replyEntrySchema`. `rebuttalEntrySchema` carries round one on every entry; embedding it per reply copied round one sixteen times through the fan-out. `renderDebateStep.outputSchema.replies` is `{ personaId, text }` |
 | `renderDebateStep` returns `transcript` and calls `saveBoardSession` | `a49968c` | Kept deliberately: `lib/board.ts` throws without `transcript`, so dropping it breaks the running web app until Task 6. `chairStep` can read `inputData.transcript` instead of rebuilding it. Task 5 still moves `saveBoardSession` into `chairStep` |
+| Sessions store `answer`, narrow `objections` and `replies`; `rebuttalsMarkdown` is gone from `BoardSession` | `897ebb7` | **`shadow-cabinet-web/lib/history.ts` is broken right now.** It reads `session.rebuttalsMarkdown.trim()` from the history route, which no longer sends that field. The `TypeError` is swallowed by `fetchBoardHistory`'s `try`, so a reopened thread silently renders empty rather than crashing, and web `tsc` stays clean because the web declares its own `BoardHistorySession`. **Task 6 fixes this, not Task 10** — leaving it until Task 10 means shipping four tasks with rehydration quietly dead |
+| Sessions written before `897ebb7` are half-empty | `897ebb7` | Rows from the old save site have `personas` and `question` only, no `answer`. Rehydration must tolerate a missing `answer` by skipping that session rather than throwing |
+| `running` is the catch-all status | `897ebb7` | A thread with no session and no pending run reports `running`, so an unknown thread id reads as a board in progress. Task 8's waiting screen must key off `waiting_on_ceo` specifically, never off "not resolved" |
 | Unopposed boards emit one persona-less reply item (`personaId: null`) via the exported `toReplyInputs` | `a49968c` | This is what keeps `inputData[0]` populated for `renderDebateStep`. `renderDebateStep` filters the null out of `replies`. Do not "simplify" it away |
 
 Two behaviours contradict the spec and are removed by this plan: `triageStep` infers CEO questions from the openings rather than the agents raising them (Task 2), and `ceoPauseStep` re-generates the asking personas' openings on resume rather than keeping their answers (Task 2).
@@ -944,6 +947,7 @@ git commit -m "feat: persist the chair's answer, all three rounds, and thread st
 - Modify: `shadow-cabinet-web/lib/board.ts`
 - Modify: `shadow-cabinet-web/lib/board.test.ts`
 - Modify: `shadow-cabinet-web/app/api/chat/route.ts`
+- Modify: `shadow-cabinet-web/lib/history.ts` — pulled forward from Task 10, because `897ebb7` left it reading a field the server no longer sends
 
 **Interfaces:**
 - Consumes: the history route's `sessions` shape (Task 5); `runBoardSession`'s polling loop (existing).
