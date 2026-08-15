@@ -44,6 +44,19 @@ These exist and are working. Do not rebuild them.
 | `app/api/chat/route.ts` (web) | Reception gate, `pendingRunId`, `writeOpenings`, `waitingMarkdown`, SSE stream |
 | `components/assistant-ui/thread.tsx` | `GroupedParts` chain-of-thought card labelled "Checked N figures", `case "data": return part.dataRendererUI` |
 
+### Already landed — do not redo
+
+Work done after this plan was written. Reading it as "not yet built" and
+following the code blocks literally would delete tested behaviour.
+
+| What | Commit | Consequence for this plan |
+|---|---|---|
+| Resume no longer re-runs round one; the CEO's answer is written into the shared thread | `b3f7b21` | **Task 2 Step 3 is complete.** Skip it. Verify by reading `ceoPauseStep` — if its resume branch calls `agent.generate`, the change was reverted; otherwise leave it alone |
+| A persona that throws renders as unavailable instead of failing the round | `b3f7b21` | `openingStep` and `rebuttalStep` each wrap their agent call in try/catch and return `personaUnavailable(...)`. Every code block below that rewrites those steps **must keep the guard** |
+| `openingStep`, `rebuttalStep`, `ceoPauseStep` are exported | `b3f7b21` | `board-session.test.ts` imports them. The code blocks below show `const …` for brevity — keep the `export` |
+| `board-session.test.ts`, six tests | `b3f7b21` | Any task changing a step's input or output shape must update this file in the same task. A task that leaves it red is not done |
+| Uploads validated with `companyDataSchema` at `POST /company-data` | `8f9e745` | Unrelated to these tasks; do not remove |
+
 Two behaviours contradict the spec and are removed by this plan: `triageStep` infers CEO questions from the openings rather than the agents raising them (Task 2), and `ceoPauseStep` re-generates the asking personas' openings on resume rather than keeping their answers (Task 2).
 
 ## File Structure
@@ -262,6 +275,11 @@ The spec says an agent that is missing a fact asks for it. Today a `triageStep` 
 
 - [ ] **Step 1: Give the opening step a structured shape**
 
+**Keep two things the block below omits for brevity:** the `export` keyword, and
+the `try/catch` that returns `personaUnavailable(personaId, error)`. Both are
+tested in `board-session.test.ts`. The structured call goes inside the existing
+`try`; the `catch` is unchanged.
+
 Replace the `openingStep` definition. The prose answer and the optional question come back in one call, so a blocked agent costs nothing extra:
 
 ```ts
@@ -349,7 +367,17 @@ and inside its `execute`, alongside the existing `personas` mapping:
 
 Return it with the rest. Every agent that asked is included — batching is what the pause does with them, not a filter applied here.
 
-- [ ] **Step 3: Keep answers on resume**
+- [x] **Step 3: Keep answers on resume — ALREADY DONE in `b3f7b21`**
+
+Skip this step. `ceoPauseStep` already clears the pending run, writes the CEO's
+answer into the shared thread via `memory.saveMessages`, and returns
+`{ ...inputData, ceoQuestions: [] }` without re-generating any opening. It is
+covered by "keeps the existing openings on resume instead of re-running round
+one" in `board-session.test.ts`. The original text is kept below for context
+only — do not apply it.
+
+<details>
+<summary>Original step, superseded</summary>
 
 The spec is explicit that round one is not re-run and agents keep their answers. Replace the resume branch of `ceoPauseStep` — the version that loops over `inputData.personas` calling `agent.generate` — with a version that only records the answer:
 
@@ -390,9 +418,14 @@ grep -rn "saveMessages" node_modules/@mastra/core/dist/memory/*.d.ts | head -5
 
 If the shape differs, match what the type says rather than this snippet — the requirement is that the answer lands in the thread the personas share, by any API the installed version offers.
 
+</details>
+
 - [ ] **Step 4: Point the graph at the new state**
 
-`triageStep` is gone, so the chain becomes `.then(renderOpeningsStep).then(ceoPauseStep)`. `ceoPauseStep`'s input and output schemas both become `roundOneStateSchema` with `contested` removed. The `rebuttalStep` input schema drops `contested`, and its early-return branch for an uncontested board is deleted — round two runs for every agent, per the spec's Assumptions.
+`triageStep` is gone, so the chain becomes `.then(renderOpeningsStep).then(ceoPauseStep)`. `ceoPauseStep`'s input and output schemas both become `roundOneStateSchema` with `contested` removed. The `rebuttalStep` input schema drops `contested`, and its early-return branch for an uncontested board is deleted — round two runs for every agent, per the spec's Assumptions. Keep its `try/catch` and its `export`.
+
+`board-session.test.ts` passes `contested: true` in both round-two cases; drop
+that field there in the same commit, or the suite fails on an unknown key.
 
 - [ ] **Step 5: Type-check**
 
