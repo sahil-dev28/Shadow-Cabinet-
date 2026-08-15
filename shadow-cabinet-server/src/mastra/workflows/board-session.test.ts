@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ceoPauseStep, openingStep, rebuttalStep } from "./board-session.ts";
+// The render step persists the session; left real it would open Mongo or write
+// a JSON file into the source tree on every run.
+vi.mock("../data/board-sessions.ts", () => ({
+  saveBoardSession: vi.fn(async () => undefined),
+}));
+
+import {
+  ceoPauseStep,
+  openingStep,
+  rebuttalStep,
+  renderDebateStep,
+  replyStep,
+  toReplyInputs,
+} from "./board-session.ts";
 
 /**
  * These call the steps directly rather than running the workflow: a board
@@ -144,6 +157,142 @@ describe("round two", () => {
     // quietly make the board look more unanimous than it was.
     expect(result.disagrees).toBe(true);
     expect(result.statement).toMatch(/COO is unavailable for this round/);
+  });
+});
+
+describe("round three", () => {
+  type RoundTwo = Parameters<typeof toReplyInputs>[0];
+
+  const carried = {
+    openingsMarkdown: "## Opening statements\n",
+    personas: [{ personaId: "cfo" as const, text: "Cut spend.", evidence: [] }],
+    question: "Should we cut spend?",
+    threadId: "t1",
+  };
+
+  const contested: RoundTwo = [
+    { personaId: "cfo", disagrees: false, with: [], statement: "", ...carried },
+    {
+      personaId: "cmo",
+      disagrees: true,
+      with: ["cfo"],
+      statement: "Pipeline dies without spend.",
+      ...carried,
+    },
+    {
+      personaId: "coo",
+      disagrees: true,
+      with: ["cso"],
+      statement: "Neither plan can be staffed.",
+      ...carried,
+    },
+    { personaId: "cso", disagrees: false, with: [], statement: "", ...carried },
+  ];
+
+  const unanimous: RoundTwo = contested.map((entry) => ({
+    ...entry,
+    disagrees: false,
+    with: [],
+    statement: "",
+  }));
+
+  it("calls only the personas an objection named", () => {
+    expect(toReplyInputs(contested).map((input) => input.personaId)).toEqual([
+      "cfo",
+      "cso",
+    ]);
+  });
+
+  it("shows a persona only the objections aimed at it", async () => {
+    const generate = vi.fn(async () => ({ text: "Payback is 14 months." }));
+
+    const result = await callStep<{ personaId: string; text: string }>(replyStep, {
+      inputData: toReplyInputs(contested)[0],
+      mastra: fakeMastra(generate as Generate),
+    });
+
+    expect(result.personaId).toBe("cfo");
+    expect(result.text).toBe("Payback is 14 months.");
+
+    // Answering an objection aimed at someone else is the fourth round this
+    // board does not have.
+    const [prompt] = generate.mock.calls[0] as unknown as [string];
+    expect(prompt).toContain("Pipeline dies without spend.");
+    expect(prompt).not.toContain("Neither plan can be staffed.");
+  });
+
+  it("reports an executive that threw instead of failing the round", async () => {
+    const generate = vi.fn(async () => {
+      throw new Error("model overloaded");
+    });
+
+    const result = await callStep<{ text: string }>(replyStep, {
+      inputData: toReplyInputs(contested)[0],
+      mastra: fakeMastra(generate as Generate),
+    });
+
+    expect(result.text).toMatch(/CFO is unavailable for this round/);
+  });
+
+  it("renders all three rounds once the replies are in", async () => {
+    const generate = vi.fn(async () => ({ text: "Payback is 14 months." }));
+
+    const entries = await Promise.all(
+      toReplyInputs(contested).map((inputData) =>
+        callStep(replyStep, { inputData, mastra: fakeMastra(generate as Generate) }),
+      ),
+    );
+
+    const debate = await callStep<{
+      replies: Array<{ personaId: string }>;
+      objections: Array<Record<string, unknown>>;
+      repliesMarkdown: string;
+      personas: unknown[];
+    }>(renderDebateStep, { inputData: entries });
+
+    expect(debate.replies.map((reply) => reply.personaId)).toEqual(["cfo", "cso"]);
+    expect(debate.repliesMarkdown).toContain("**CFO replies**");
+    expect(debate.personas).toEqual(carried.personas);
+    // Round one's state is not copied onto every objection four times over.
+    expect(Object.keys(debate.objections[0]).sort()).toEqual([
+      "disagrees",
+      "personaId",
+      "statement",
+      "with",
+    ]);
+  });
+
+  it("still renders the debate when nobody was objected to", async () => {
+    const generate = vi.fn(async () => ({ text: "never asked" }));
+
+    // The empty fan-out is the normal unopposed-board path, and `foreach` over
+    // an empty array would leave the render step with nothing to render.
+    const inputs = toReplyInputs(unanimous);
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0].personaId).toBeNull();
+
+    const entries = await Promise.all(
+      inputs.map((inputData) =>
+        callStep(replyStep, { inputData, mastra: fakeMastra(generate as Generate) }),
+      ),
+    );
+
+    expect(generate).not.toHaveBeenCalled();
+
+    const debate = await callStep<{
+      question: string;
+      threadId: string;
+      replies: unknown[];
+      repliesMarkdown: string;
+      personas: unknown[];
+    }>(renderDebateStep, { inputData: entries });
+
+    expect(debate.replies).toEqual([]);
+    expect(debate.repliesMarkdown).toContain("No replies were needed");
+    // Rounds one and two survive the round that never ran.
+    expect(debate.question).toBe("Should we cut spend?");
+    expect(debate.threadId).toBe("t1");
+    expect(debate.personas).toEqual(carried.personas);
   });
 });
 

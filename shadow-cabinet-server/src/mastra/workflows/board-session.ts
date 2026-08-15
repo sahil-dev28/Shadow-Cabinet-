@@ -6,9 +6,13 @@ import { saveBoardSession } from "../data/board-sessions.ts";
 import { clearPendingRun, savePendingRun } from "../data/pending-runs.ts";
 import {
   type OpeningEntry,
+  type ReplyEntry,
+  formatObjectionsForReply,
   formatOpeningsForRebuttal,
+  personasNamedIn,
   renderOpeningRound,
   renderRebuttalRound,
+  renderReplyRound,
 } from "./transcript.ts";
 
 const personaIdSchema = z.enum(PERSONA_IDS as unknown as [PersonaId, ...PersonaId[]]);
@@ -106,11 +110,19 @@ function collectEvidence(response: {
   });
 }
 
-const rebuttalEntrySchema = z.object({
+/**
+ * What one persona said about another's position, and nothing else. Round three
+ * hands this to four repliers at once, so the round-one state `rebuttalStep`
+ * carries alongside it is stripped first rather than copied sixteen times.
+ */
+const objectionSchema = z.object({
   personaId: personaIdSchema,
   disagrees: z.boolean(),
   with: z.array(personaIdSchema),
   statement: z.string(),
+});
+
+const rebuttalEntrySchema = objectionSchema.extend({
   // Carried through the second fan-out: `workflowRoute` does not forward writer
   // output, so the transcript survives as workflow output, not stream text.
   openingsMarkdown: z.string(),
@@ -379,33 +391,158 @@ citing figures you have fetched.`,
   },
 });
 
-const renderRebuttalsStep = createStep({
-  id: "render-rebuttals",
-  inputSchema: z.array(rebuttalEntrySchema),
-  outputSchema: z.object({
-    transcript: z.string(),
-    personas: z.array(personaTurnSchema),
-    rebuttalsMarkdown: z.string(),
-  }),
+/**
+ * Everything round three needs, for one replier. `foreach` hands the next step
+ * only what its items return, so rounds one and two ride along here or they do
+ * not survive to be rendered. A null `personaId` is the unopposed board — see
+ * `toReplyInputs`.
+ */
+const replyInputSchema = z.object({
+  personaId: personaIdSchema.nullable(),
+  question: z.string(),
+  threadId: z.string(),
+  personas: z.array(personaTurnSchema),
+  objections: z.array(objectionSchema),
+  openingsMarkdown: z.string(),
+  rebuttalsMarkdown: z.string(),
+});
+
+const replyEntrySchema = replyInputSchema.extend({ text: z.string() });
+
+/** A reply as the CEO reads it, without the state it carried to get here. */
+const replyTurnSchema = z.object({
+  personaId: personaIdSchema,
+  text: z.string(),
+});
+
+/**
+ * Round three only calls the personas an objection actually named — usually one
+ * or two, not four.
+ *
+ * When nobody was named the fan-out would be empty, and `foreach` over an empty
+ * array runs nothing, which would leave `renderDebateStep` with no round-two
+ * state to render and no way to know what the board had been asked. So a
+ * unanimous board sends one persona-less item through instead: `replyStep`
+ * returns it without calling a model, so the round still costs nothing.
+ */
+export function toReplyInputs(
+  entries: Array<z.infer<typeof rebuttalEntrySchema>>,
+): Array<z.infer<typeof replyInputSchema>> {
+  const first = entries[0];
+  const objections = entries.map(
+    ({ personaId, disagrees, with: targets, statement }) => ({
+      personaId,
+      disagrees,
+      with: targets,
+      statement,
+    }),
+  );
+
+  const carried = {
+    question: first.question,
+    threadId: first.threadId,
+    personas: first.personas,
+    objections,
+    openingsMarkdown: first.openingsMarkdown,
+    rebuttalsMarkdown: renderRebuttalRound(objections),
+  };
+
+  const named = personasNamedIn(objections);
+  if (named.length === 0) return [{ personaId: null, ...carried }];
+
+  return named.map((personaId) => ({ personaId, ...carried }));
+}
+
+/** Pass three: defend or concede, nothing else. */
+export const replyStep = createStep({
+  id: "reply",
+  inputSchema: replyInputSchema,
+  outputSchema: replyEntrySchema,
+  execute: async ({ inputData, mastra }) => {
+    const { personaId, question, threadId, objections } = inputData;
+
+    if (personaId === null) return { ...inputData, text: "" };
+
+    try {
+      const agent = mastra.getAgentById(`${personaId}-agent`);
+
+      const response = await agent.generate(
+        `The CEO asked: "${question}"
+
+Your fellow executives objected to your position:
+
+${formatObjectionsForReply(objections, personaId)}
+
+Answer them. Defend your position with figures you have fetched, or concede
+the point plainly. Do not raise a new objection against anyone else and do not
+ask the CEO anything — this is the last word before the chair writes the
+answer. Under 120 words.`,
+        { memory: { resource: "ceo", thread: threadId } },
+      );
+
+      const blocked = tripwireNotice(personaId, response);
+
+      return { ...inputData, text: blocked ?? response.text };
+    } catch (error) {
+      // One executive failing to answer for itself is worth less than the
+      // round: the objection stands unanswered and the board still finishes.
+      return { ...inputData, text: personaUnavailable(personaId, error) };
+    }
+  },
+});
+
+const debateStateSchema = z.object({
+  question: z.string(),
+  threadId: z.string(),
+  personas: z.array(personaTurnSchema),
+  objections: z.array(objectionSchema),
+  replies: z.array(replyTurnSchema),
+  openingsMarkdown: z.string(),
+  rebuttalsMarkdown: z.string(),
+  repliesMarkdown: z.string(),
+  transcript: z.string(),
+});
+
+export const renderDebateStep = createStep({
+  id: "render-debate",
+  inputSchema: z.array(replyEntrySchema),
+  outputSchema: debateStateSchema,
   execute: async ({ inputData, writer }) => {
-    const markdown = renderRebuttalRound(inputData);
-    await writer?.write(`\n${markdown}`);
+    // Never empty: `toReplyInputs` sends a placeholder through when nobody was
+    // objected to, so a unanimous board still arrives here carrying its state.
+    const first = inputData[0];
+
+    const replies: ReplyEntry[] = inputData.flatMap((entry) =>
+      entry.personaId === null
+        ? []
+        : [{ personaId: entry.personaId, text: entry.text }],
+    );
+
+    const repliesMarkdown = renderReplyRound(replies);
+
+    // Both rounds go out in one write so their sections cannot interleave.
+    await writer?.write(`\n${first.rebuttalsMarkdown}\n${repliesMarkdown}`);
 
     // Persisted as the CEO saw it, so reopening the thread replays the board
     // rather than the agents' internal prompts.
     await saveBoardSession({
-      threadId: inputData[0].threadId,
-      question: inputData[0].question,
-      personas: inputData[0].personas,
-      rebuttalsMarkdown: markdown,
+      threadId: first.threadId,
+      question: first.question,
+      personas: first.personas,
+      rebuttalsMarkdown: first.rebuttalsMarkdown,
     });
 
-    // `transcript` is both rounds merged; `personas` is the same openings split
-    // per agent so the UI can render each executive with its own evidence.
     return {
-      transcript: `${inputData[0].openingsMarkdown}\n${markdown}`,
-      personas: inputData[0].personas,
-      rebuttalsMarkdown: markdown,
+      question: first.question,
+      threadId: first.threadId,
+      personas: first.personas,
+      objections: first.objections,
+      replies,
+      openingsMarkdown: first.openingsMarkdown,
+      rebuttalsMarkdown: first.rebuttalsMarkdown,
+      repliesMarkdown,
+      // All three rounds merged, which is still what the web proxy renders.
+      transcript: `${first.openingsMarkdown}\n${first.rebuttalsMarkdown}\n${repliesMarkdown}`,
     };
   },
 });
@@ -413,11 +550,7 @@ const renderRebuttalsStep = createStep({
 export const boardSessionWorkflow = createWorkflow({
   id: "boardSession",
   inputSchema: boardInputSchema,
-  outputSchema: z.object({
-    transcript: z.string(),
-    personas: z.array(personaTurnSchema),
-    rebuttalsMarkdown: z.string(),
-  }),
+  outputSchema: debateStateSchema,
 })
   .map(async ({ inputData }) =>
     PERSONA_IDS.map((personaId) => ({
@@ -441,5 +574,8 @@ export const boardSessionWorkflow = createWorkflow({
     })),
   )
   .foreach(rebuttalStep, { concurrency: 4 })
-  .then(renderRebuttalsStep)
+  // Fan out a third time, to the objected-to only.
+  .map(async ({ inputData }) => toReplyInputs(inputData))
+  .foreach(replyStep, { concurrency: 4 })
+  .then(renderDebateStep)
   .commit();
