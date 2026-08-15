@@ -66,6 +66,18 @@ function tripwireNotice(
   return `_${personaId.toUpperCase()} is unavailable for this round: ${reason}._`;
 }
 
+/**
+ * An executive that threw is reported the same way as one a guardrail blocked:
+ * named, absent, and with the reason. `.foreach` fails the whole run if a step
+ * throws, so one persona timing out would otherwise cost the CEO the other
+ * three — the board is worth more with a gap in it than not at all.
+ */
+function personaUnavailable(personaId: PersonaId, error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error);
+
+  return `_${personaId.toUpperCase()} is unavailable for this round: ${reason}._`;
+}
+
 /** Pairs Mastra's separate toolCalls/toolResults arrays back into one record. */
 function collectEvidence(response: {
   toolCalls?: readonly ToolCallEnvelope[];
@@ -146,7 +158,7 @@ const triageSchema = z.object({
 const CEO_PAUSE_THRESHOLD = 2;
 
 /** Pass one: one persona answers the CEO without seeing its peers. */
-const openingStep = createStep({
+export const openingStep = createStep({
   id: "opening",
   inputSchema: z.object({
     personaId: personaIdSchema,
@@ -156,21 +168,32 @@ const openingStep = createStep({
   outputSchema: openingEntrySchema,
   execute: async ({ inputData, mastra }) => {
     const { personaId, question, threadId } = inputData;
-    const agent = mastra.getAgentById(`${personaId}-agent`);
 
-    const response = await agent.generate(question, {
-      memory: { resource: "ceo", thread: threadId },
-    });
+    try {
+      const agent = mastra.getAgentById(`${personaId}-agent`);
 
-    const blocked = tripwireNotice(personaId, response);
+      const response = await agent.generate(question, {
+        memory: { resource: "ceo", thread: threadId },
+      });
 
-    return {
-      personaId,
-      text: blocked ?? response.text,
-      evidence: blocked ? [] : collectEvidence(response),
-      question,
-      threadId,
-    };
+      const blocked = tripwireNotice(personaId, response);
+
+      return {
+        personaId,
+        text: blocked ?? response.text,
+        evidence: blocked ? [] : collectEvidence(response),
+        question,
+        threadId,
+      };
+    } catch (error) {
+      return {
+        personaId,
+        text: personaUnavailable(personaId, error),
+        evidence: [],
+        question,
+        threadId,
+      };
+    }
   },
 });
 
@@ -272,7 +295,7 @@ is not blocked. Most rounds have no blocking question at all.`,
  * Questions are batched into one pause rather than asked one at a time, and the
  * answer is written back into the shared thread so every persona sees it.
  */
-const ceoPauseStep = createStep({
+export const ceoPauseStep = createStep({
   id: "ceo-question",
   inputSchema: roundOneStateSchema,
   outputSchema: roundOneStateSchema,
@@ -300,45 +323,34 @@ const ceoPauseStep = createStep({
 
     await clearPendingRun(inputData.threadId);
 
-    // Only the executives that asked revise; the rest keep their positions.
-    const asked = new Set(inputData.ceoQuestions.map((entry) => entry.personaId));
+    // Round one is not re-run. The answer goes into the thread every persona
+    // shares, so the agent that asked reads it on its next turn, and the three
+    // that already answered keep the answers the CEO has been looking at.
+    const agent = mastra.getAgentById("cfo-agent");
+    const memory = await agent.getMemory();
 
-    const personas = await Promise.all(
-      inputData.personas.map(async (persona) => {
-        if (!asked.has(persona.personaId as PersonaId)) return persona;
+    await memory?.saveMessages({
+      messages: [
+        {
+          id: `ceo-answer-${runId}`,
+          threadId: inputData.threadId,
+          resourceId: "ceo",
+          role: "user",
+          content: {
+            format: 2,
+            parts: [{ type: "text", text: `The CEO answered: ${resumeData.answer}` }],
+          },
+          createdAt: new Date(),
+        },
+      ],
+    });
 
-        const agent = mastra.getAgentById(`${persona.personaId}-agent`);
-        const response = await agent.generate(
-          `The CEO answered your question: "${resumeData.answer}"
-
-Give your position again, now that you have that answer.`,
-          { memory: { resource: "ceo", thread: inputData.threadId } },
-        );
-
-        const blocked = tripwireNotice(persona.personaId as PersonaId, response);
-
-        return {
-          personaId: persona.personaId,
-          text: blocked ?? response.text,
-          evidence: blocked ? [] : collectEvidence(response),
-        };
-      }),
-    );
-
-    const openings = personas.map(({ personaId, text }) => ({ personaId, text }));
-
-    return {
-      ...inputData,
-      personas,
-      openings,
-      openingsMarkdown: renderOpeningRound(openings as OpeningEntry[]),
-      ceoQuestions: [],
-    };
+    return { ...inputData, ceoQuestions: [] };
   },
 });
 
 /** Pass two: this persona reads the others and says whether it objects. */
-const rebuttalStep = createStep({
+export const rebuttalStep = createStep({
   id: "rebuttal",
   inputSchema: z.object({
     personaId: personaIdSchema,
@@ -369,11 +381,13 @@ const rebuttalStep = createStep({
       };
     }
 
-    const agent = mastra.getAgentById(`${personaId}-agent`);
-
     const others = formatOpeningsForRebuttal(openings, personaId);
 
-    const response = await agent.generate(
+    let response;
+    try {
+      const agent = mastra.getAgentById(`${personaId}-agent`);
+
+      response = await agent.generate(
       `The CEO asked: "${question}"
 
 Your fellow executives answered:
@@ -384,11 +398,25 @@ Do you have a substantive objection to any of those positions? Only say yes if
 you genuinely disagree on the decision or the reasoning. Agreeing with a
 different emphasis is not a disagreement. If you object, name who and say why,
 citing figures you have fetched.`,
-      {
-        memory: { resource: "ceo", thread: threadId },
-        structuredOutput: { schema: verdictSchema },
-      },
-    );
+        {
+          memory: { resource: "ceo", thread: threadId },
+          structuredOutput: { schema: verdictSchema },
+        },
+      );
+    } catch (error) {
+      // Surfaced as a disagreement entry so the absence is visible, rather than
+      // silently counting as "no objection" and skewing the round.
+      return {
+        personaId,
+        disagrees: true,
+        with: [] as PersonaId[],
+        statement: personaUnavailable(personaId, error),
+        openingsMarkdown,
+        personas,
+        question,
+        threadId,
+      };
+    }
 
     // A blocked rebuttal is surfaced as a disagreement entry so the reader sees
     // the persona was silenced, not that it declined to object.
