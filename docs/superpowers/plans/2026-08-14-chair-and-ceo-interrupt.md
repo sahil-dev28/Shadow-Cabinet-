@@ -1607,6 +1607,139 @@ git commit -m "docs: rewrite the design write-up around the chair and the interr
 
 ---
 
+---
+
+### Task 11: Auto-named, persisted threads in the sidebar
+
+The sidebar shows a static "New Chat" because it renders assistant-ui's
+`ThreadListPrimitive`, which is bound to that runtime's own in-memory thread
+list. This app's boards are URLs backed by Mastra threads, and the two have
+never been connected — so the list cannot show past boards no matter what is
+stored. This task names each thread from its first question and replaces that
+list with one fed by the server.
+
+**Files:**
+- Create: `shadow-cabinet-server/src/mastra/routes/board-threads.ts`
+- Modify: `shadow-cabinet-server/src/mastra/workflows/board-session.ts`
+- Modify: `shadow-cabinet-server/src/mastra/index.ts`
+- Create: `shadow-cabinet-web/components/assistant-ui/board-thread-list.tsx`
+- Modify: `shadow-cabinet-web/components/assistant-ui/threadlist-sidebar.tsx`
+
+**Interfaces:**
+- Consumes: `listBoardSessions`, `saveBoardSession` (Task 5); `chairStep` (Task 4).
+- Produces:
+  - `GET /board/threads` → `{ threads: Array<{ threadId: string; title: string; updatedAt: string }> }`, newest first
+  - `BoardThreadList` — a client component listing them as links to `/board/<threadId>`
+
+**Verified against the installed `@mastra/core@1.57.0` — do not re-derive:**
+
+```ts
+type StorageThreadType = {
+  id: string; title?: string; resourceId: string;
+  createdAt: Date; updatedAt: Date; metadata?: Record<string, unknown>;
+};
+// Both title and metadata are REQUIRED in this signature, despite title being
+// optional on the record itself. Pass the existing metadata through.
+abstract updateThread({ id, title, metadata }: {
+  id: string; title: string; metadata: Record<string, unknown>;
+}): Promise<StorageThreadType>;
+```
+
+Confirm the listing method before writing the route:
+
+```bash
+cd /Users/abhishekkolge/projects/shadow-cabinet
+grep -rn "getThreadsByResourceId" node_modules/.pnpm/@mastra+core@1.57.0*/node_modules/@mastra/core/dist/memory/memory.d.ts
+```
+
+If it exists, list from Mastra and fall back to `listBoardSessions` for threads
+it does not know. If it does not, source the list from stored board sessions
+alone and say so in your report.
+
+- [ ] **Step 1: Title the thread once, from the first question**
+
+In `chairStep`, after `saveBoardSession`, title the thread only when this was
+its first session. Generating on every turn would rename a thread mid-life and
+burn a call per question:
+
+```ts
+    // First session only: a thread is named after the question that opened it,
+    // and later questions do not get to rename it under the CEO.
+    const sessions = await listBoardSessions(inputData.threadId);
+    if (sessions.length === 1) {
+      await titleThread(mastra, inputData.threadId, inputData.question);
+    }
+```
+
+`titleThread` lives beside the step. It uses the cheap model — this is naming,
+not reasoning — and never a board agent, whose persona would leak into the
+title:
+
+```ts
+const titleSchema = z.object({
+  title: z.string().describe("Three to six words, no quotes, no trailing period."),
+});
+
+async function titleThread(mastra: Mastra, threadId: string, question: string) {
+  try {
+    const agent = mastra.getAgentById("cfo-agent");
+
+    const response = await agent.generate(
+      `Title this board session in three to six words, as a neutral label a
+busy CEO would recognise in a sidebar. No quotes, no trailing period, no
+persona voice.\n\nQuestion: "${question}"`,
+      { model: "anthropic/claude-haiku-4-5", structuredOutput: { schema: titleSchema } },
+    );
+
+    const title = response.object?.title?.trim();
+    if (!title) return;
+
+    const memory = await agent.getMemory();
+    const thread = await memory?.getThreadById({ threadId });
+
+    await memory?.updateThread({
+      id: threadId,
+      title,
+      metadata: thread?.metadata ?? {},
+    });
+  } catch {
+    // A thread without a title falls back to its first question in the UI, so
+    // a naming failure must never cost the CEO the answer.
+  }
+}
+```
+
+- [ ] **Step 2: Serve the list**
+
+`board-threads.ts` returns threads newest first, each with a title, falling back
+to the first question truncated to ~60 characters when the title is missing —
+which covers every thread created before this task.
+
+- [ ] **Step 3: Replace the sidebar list**
+
+`BoardThreadList` fetches `/board/threads` and renders links to
+`/board/<threadId>`, marking the active one from `usePathname()`. Swap
+`<ThreadList />` for it in `threadlist-sidebar.tsx`. Keep the "New Thread"
+button, pointing at `/`, which already redirects to a fresh board id.
+
+- [ ] **Step 4: Verify**
+
+- `pnpm test` green, `tsc` clean in both packages
+- Ask a question on a fresh thread, wait for the run to reach a terminal state,
+  then `curl -s http://localhost:4111/board/threads` and confirm the thread
+  appears with a real title rather than the raw id
+- Ask a **second** question on that same thread and confirm the title is
+  unchanged — this is the regression the "first session only" guard exists for
+- Reload the app: the sidebar lists prior boards by title, and clicking one
+  replays that board's answer and debate
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add shadow-cabinet-server/src/mastra shadow-cabinet-web/components
+git commit -m "feat: name board threads from their first question and list them"
+```
+
 ## Verification Checklist
 
 Run before considering the plan complete:
@@ -1621,6 +1754,7 @@ Run before considering the plan complete:
 - [ ] A reopened thread renders the answer and debate identically to the live run
 - [ ] Targeting one persona skips the debate and the chair
 - [ ] "hi" still answers without convening the board
+- [ ] The sidebar lists past boards by title, and a second question does not rename a thread
 - [ ] Every figure quoted in an answer exists in `company-data.json`
 
 ## Known Risks
