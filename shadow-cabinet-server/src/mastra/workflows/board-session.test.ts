@@ -108,7 +108,6 @@ describe("round two", () => {
         openings: [{ personaId: "cfo", text: "Cut spend." }],
         openingsMarkdown: "## Opening statements\n",
         personas,
-        contested: true,
       },
       mastra: fakeMastra(generate as Generate),
     });
@@ -136,7 +135,6 @@ describe("round two", () => {
           openings: [{ personaId: "cfo", text: "Cut spend." }],
           openingsMarkdown: "## Opening statements\n",
           personas: [],
-          contested: true,
         },
         mastra: fakeMastra(generate as Generate),
       },

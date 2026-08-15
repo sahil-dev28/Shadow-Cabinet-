@@ -33,6 +33,7 @@ const openingEntrySchema = z.object({
   personaId: personaIdSchema,
   text: z.string(),
   evidence: z.array(evidenceSchema),
+  questionForCeo: z.string(),
   question: z.string(),
   threadId: z.string(),
 });
@@ -137,25 +138,20 @@ const ceoQuestionSchema = z.object({
 });
 
 /**
- * Read off the openings by a cheap model rather than asked of each executive:
- * it costs one call instead of four, and it keeps the openings themselves free
- * of structured-output scaffolding.
+ * The position and the question come back in one call, so an executive that is
+ * blocked costs nothing extra — and the question is the one it actually has,
+ * not one inferred from its prose after the fact.
  */
-const triageSchema = z.object({
-  contested: z
-    .boolean()
+const openingOutputSchema = z.object({
+  position: z
+    .string()
+    .describe("Your answer to the CEO, in your own voice, under 200 words."),
+  questionForCeo: z
+    .string()
     .describe(
-      "True only if two executives reach genuinely different conclusions about what to do. Different emphasis on the same conclusion is not contested.",
-    ),
-  ceoQuestions: z
-    .array(ceoQuestionSchema)
-    .describe(
-      "Blocking questions only. Include one only if an executive cannot stand behind its recommendation until the CEO answers, and only the CEO can answer it. Rhetorical framing, requests for data the company would hold, and 'it depends on X' asides are NOT blocking. Most rounds have none. Never more than one per executive.",
+      "Ask ONLY if you cannot stand behind your position until the CEO personally answers, and only the CEO can answer it — never for a figure a tool could return. Ask for facts, never for the decision. Empty string otherwise, which is the normal case.",
     ),
 });
-
-/** Pausing the board is expensive, so it takes more than one executive asking. */
-const CEO_PAUSE_THRESHOLD = 2;
 
 /** Pass one: one persona answers the CEO without seeing its peers. */
 export const openingStep = createStep({
@@ -174,14 +170,20 @@ export const openingStep = createStep({
 
       const response = await agent.generate(question, {
         memory: { resource: "ceo", thread: threadId },
+        structuredOutput: { schema: openingOutputSchema },
       });
 
       const blocked = tripwireNotice(personaId, response);
+      const opening = response.object ?? {
+        position: response.text,
+        questionForCeo: "",
+      };
 
       return {
         personaId,
-        text: blocked ?? response.text,
+        text: blocked ?? opening.position,
         evidence: blocked ? [] : collectEvidence(response),
+        questionForCeo: blocked ? "" : opening.questionForCeo.trim(),
         question,
         threadId,
       };
@@ -190,6 +192,7 @@ export const openingStep = createStep({
         personaId,
         text: personaUnavailable(personaId, error),
         evidence: [],
+        questionForCeo: "",
         question,
         threadId,
       };
@@ -206,6 +209,7 @@ const renderOpeningsStep = createStep({
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
     openingsMarkdown: z.string(),
     personas: z.array(personaTurnSchema),
+    ceoQuestions: z.array(ceoQuestionSchema),
   }),
   execute: async ({ inputData, writer }) => {
     const openings: OpeningEntry[] = inputData.map((entry) => ({
@@ -219,6 +223,15 @@ const renderOpeningsStep = createStep({
       evidence: entry.evidence,
     }));
 
+    // Every executive that asked is carried forward. Batching them into one
+    // pause is the pause's job, not a filter applied here.
+    const ceoQuestions = inputData
+      .filter((entry) => entry.questionForCeo.length > 0)
+      .map((entry) => ({
+        personaId: entry.personaId,
+        question: entry.questionForCeo,
+      }));
+
     // Stream the whole round at once so the sections cannot interleave.
     const openingsMarkdown = renderOpeningRound(openings);
     await writer?.write(openingsMarkdown);
@@ -229,6 +242,7 @@ const renderOpeningsStep = createStep({
       openings,
       openingsMarkdown,
       personas,
+      ceoQuestions,
     };
   },
 });
@@ -239,55 +253,7 @@ const roundOneStateSchema = z.object({
   openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
   openingsMarkdown: z.string(),
   personas: z.array(personaTurnSchema),
-  contested: z.boolean(),
   ceoQuestions: z.array(ceoQuestionSchema),
-});
-
-/**
- * Reads the openings and decides two things: whether round two is warranted at
- * all, and whether anyone put a question to the CEO. A unanimous board with no
- * questions stops here, which is the difference between five agent calls and
- * nine.
- */
-const triageStep = createStep({
-  id: "triage",
-  inputSchema: roundOneStateSchema.omit({ contested: true, ceoQuestions: true }),
-  outputSchema: roundOneStateSchema,
-  execute: async ({ inputData, mastra }) => {
-    const agent = mastra.getAgentById("cfo-agent");
-
-    const response = await agent.generate(
-      `You are triaging a board meeting transcript. Do not take a position.
-
-${inputData.openingsMarkdown}
-
-Report whether the executives genuinely disagree about what to do, and list only
-questions that block an executive from standing behind its recommendation until
-the CEO personally answers. An executive listing what it would like to see next
-is not blocked. Most rounds have no blocking question at all.`,
-      {
-        model: "anthropic/claude-haiku-4-5",
-        structuredOutput: { schema: triageSchema },
-      },
-    );
-
-    const triage = response.object ?? { contested: true, ceoQuestions: [] };
-
-    // One question per executive, and only pause when enough of the board is
-    // actually stuck — a single asker is not worth halting the session for.
-    const firstPerPersona = [
-      ...new Map(
-        triage.ceoQuestions.map((entry) => [entry.personaId, entry]),
-      ).values(),
-    ];
-
-    return {
-      ...inputData,
-      contested: triage.contested,
-      ceoQuestions:
-        firstPerPersona.length >= CEO_PAUSE_THRESHOLD ? firstPerPersona : [],
-    };
-  },
 });
 
 /**
@@ -359,27 +325,11 @@ export const rebuttalStep = createStep({
     openings: z.array(z.object({ personaId: personaIdSchema, text: z.string() })),
     openingsMarkdown: z.string(),
     personas: z.array(personaTurnSchema),
-    contested: z.boolean(),
   }),
   outputSchema: rebuttalEntrySchema,
   execute: async ({ inputData, mastra }) => {
     const { personaId, question, threadId, openings, openingsMarkdown, personas } =
       inputData;
-
-    // Round two is for resolving disagreement. Where triage found none, asking
-    // four executives to object anyway invites manufactured dissent.
-    if (!inputData.contested) {
-      return {
-        personaId,
-        disagrees: false,
-        with: [],
-        statement: "",
-        openingsMarkdown,
-        personas,
-        question,
-        threadId,
-      };
-    }
 
     const others = formatOpeningsForRebuttal(openings, personaId);
 
@@ -478,7 +428,6 @@ export const boardSessionWorkflow = createWorkflow({
   )
   .foreach(openingStep, { concurrency: 4 })
   .then(renderOpeningsStep)
-  .then(triageStep)
   .then(ceoPauseStep)
   // Fan out again, with everyone's openings attached.
   .map(async ({ inputData }) =>
@@ -489,7 +438,6 @@ export const boardSessionWorkflow = createWorkflow({
       openings: inputData.openings,
       openingsMarkdown: inputData.openingsMarkdown,
       personas: inputData.personas,
-      contested: inputData.contested,
     })),
   )
   .foreach(rebuttalStep, { concurrency: 4 })
