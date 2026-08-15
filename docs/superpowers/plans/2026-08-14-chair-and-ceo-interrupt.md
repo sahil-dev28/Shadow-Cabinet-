@@ -23,7 +23,7 @@
 - A CEO's answer is scoped to the thread that asked. Never write it anywhere a later thread can read.
 - Run the server from the repo root with `pnpm dev`; the web app from `shadow-cabinet-web` with `pnpm dev`.
 - Type-check with `pnpm exec tsc --noEmit` from the repo root (server) and from `shadow-cabinet-web` (web). Tests with `pnpm test` from the repo root — Vitest picks up both packages.
-- The Mastra dev server rebuilds on file save. After editing anything under `shadow-cabinet-server/src/mastra/`, wait for `curl -s -o /dev/null -w "%{http_code}" http://localhost:4111/api/agents` to return `200` before running a live check, or the request will fail against a half-reloaded server.
+- The Mastra dev server rebuilds on file save. After editing anything under `shadow-cabinet-server/src/mastra/`, wait for `curl -s -o /dev/null -w "%{http_code}" http://localhost:4111/api/agents` to return `200` before running a live check, or the request will fail against a half-reloaded server. **Then touch no file under that directory until the run reaches a terminal state.** A rebuild mid-run kills the run: Mastra's restart path cannot rehydrate an in-flight `foreach` and throws `Cannot read properties of undefined (reading 'length')`. A live board costs minutes and real model calls, so a stray comment fix means paying for it twice.
 
 ## Current State
 
@@ -56,6 +56,9 @@ following the code blocks literally would delete tested behaviour.
 | `openingStep`, `rebuttalStep`, `ceoPauseStep` are exported | `b3f7b21` | `board-session.test.ts` imports them. The code blocks below show `const …` for brevity — keep the `export` |
 | `board-session.test.ts`, six tests | `b3f7b21` | Any task changing a step's input or output shape must update this file in the same task. A task that leaves it red is not done |
 | Uploads validated with `companyDataSchema` at `POST /company-data` | `8f9e745` | Unrelated to these tasks; do not remove |
+| Round three shipped with narrower carried schemas than this plan drafted | `a49968c` | **Task 4 must use `objectionSchema` and `replyTurnSchema`**, not `rebuttalEntrySchema` and `replyEntrySchema`. `rebuttalEntrySchema` carries round one on every entry; embedding it per reply copied round one sixteen times through the fan-out. `renderDebateStep.outputSchema.replies` is `{ personaId, text }` |
+| `renderDebateStep` returns `transcript` and calls `saveBoardSession` | `a49968c` | Kept deliberately: `lib/board.ts` throws without `transcript`, so dropping it breaks the running web app until Task 6. `chairStep` can read `inputData.transcript` instead of rebuilding it. Task 5 still moves `saveBoardSession` into `chairStep` |
+| Unopposed boards emit one persona-less reply item (`personaId: null`) via the exported `toReplyInputs` | `a49968c` | This is what keeps `inputData[0]` populated for `renderDebateStep`. `renderDebateStep` filters the null out of `replies`. Do not "simplify" it away |
 
 Two behaviours contradict the spec and are removed by this plan: `triageStep` infers CEO questions from the openings rather than the agents raising them (Task 2), and `ceoPauseStep` re-generates the asking personas' openings on resume rather than keeping their answers (Task 2).
 
@@ -758,15 +761,18 @@ In `mastra/index.ts`, import it and add it to the `agents` map: `agents: { cfoAg
 In `board-session.ts`, after `renderDebateStep`:
 
 ```ts
+// Matches what `renderDebateStep` actually returns as of `a49968c`. Zod strips
+// unknown keys, so the `transcript` it also returns passes through harmlessly.
 const debateStateSchema = z.object({
   question: z.string(),
   threadId: z.string(),
   personas: z.array(personaTurnSchema),
-  objections: z.array(rebuttalEntrySchema),
-  replies: z.array(replyEntrySchema),
+  objections: z.array(objectionSchema),
+  replies: z.array(replyTurnSchema),
   openingsMarkdown: z.string(),
   rebuttalsMarkdown: z.string(),
   repliesMarkdown: z.string(),
+  transcript: z.string(),
 });
 
 const chairStep = createStep({
@@ -777,13 +783,15 @@ const chairStep = createStep({
     question: z.string(),
     threadId: z.string(),
     personas: z.array(personaTurnSchema),
-    objections: z.array(rebuttalEntrySchema),
-    replies: z.array(replyEntrySchema),
+    objections: z.array(objectionSchema),
+    replies: z.array(replyTurnSchema),
     transcript: z.string(),
   }),
   execute: async ({ inputData, mastra }) => {
     const agent = mastra.getAgentById("chair-agent");
-    const transcript = `${inputData.openingsMarkdown}\n${inputData.rebuttalsMarkdown}\n${inputData.repliesMarkdown}`;
+    // Already assembled by `renderDebateStep`; rebuilding it here would let the
+    // two drift.
+    const { transcript } = inputData;
 
     const response = await agent.generate(
       `The CEO asked: "${inputData.question}"
