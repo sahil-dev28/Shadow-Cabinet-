@@ -14,7 +14,8 @@ export const mastra = new Mastra({
   storage: createStorage(),
   server: {
     apiRoutes: [
-      // The board: one CEO question in, a two-pass debate transcript out.
+      // The board: one CEO question in, three rounds of debate closed by the
+      // chair's single answer out.
       workflowRoute({
         path: "/board",
         workflow: "boardSession",

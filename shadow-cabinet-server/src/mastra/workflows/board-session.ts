@@ -523,15 +523,6 @@ export const renderDebateStep = createStep({
     // Both rounds go out in one write so their sections cannot interleave.
     await writer?.write(`\n${first.rebuttalsMarkdown}\n${repliesMarkdown}`);
 
-    // Persisted as the CEO saw it, so reopening the thread replays the board
-    // rather than the agents' internal prompts.
-    await saveBoardSession({
-      threadId: first.threadId,
-      question: first.question,
-      personas: first.personas,
-      rebuttalsMarkdown: first.rebuttalsMarkdown,
-    });
-
     return {
       question: first.question,
       threadId: first.threadId,
@@ -583,6 +574,18 @@ ${transcript}
 Write the answer.`,
       { memory: { resource: "ceo", thread: inputData.threadId } },
     );
+
+    // Saved here rather than after the debate so the record includes the answer
+    // the CEO actually read; a session stored before the chair spoke would
+    // reopen as an argument with no conclusion.
+    await saveBoardSession({
+      threadId: inputData.threadId,
+      question: inputData.question,
+      answer: response.text,
+      personas: inputData.personas,
+      objections: inputData.objections,
+      replies: inputData.replies,
+    });
 
     return {
       answer: response.text,

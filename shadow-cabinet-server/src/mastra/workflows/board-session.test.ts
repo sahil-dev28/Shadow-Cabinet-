@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-// The render step persists the session; left real it would open Mongo or write
+// The chair step persists the session; left real it would open Mongo or write
 // a JSON file into the source tree on every run.
 vi.mock("../data/board-sessions.ts", () => ({
   saveBoardSession: vi.fn(async () => undefined),
 }));
 
+import { saveBoardSession } from "../data/board-sessions.ts";
 import {
   ceoPauseStep,
+  chairStep,
   openingStep,
   rebuttalStep,
   renderDebateStep,
@@ -293,6 +295,53 @@ describe("round three", () => {
     expect(debate.question).toBe("Should we cut spend?");
     expect(debate.threadId).toBe("t1");
     expect(debate.personas).toEqual(carried.personas);
+  });
+});
+
+describe("the chair", () => {
+  const debate = {
+    question: "Should we cut spend?",
+    threadId: "t1",
+    personas: [{ personaId: "cfo", text: "Cut spend.", evidence: [] }],
+    objections: [
+      { personaId: "cmo", disagrees: true, with: ["cfo"], statement: "Pipeline." },
+    ],
+    replies: [{ personaId: "cfo", text: "Payback is 14 months." }],
+    openingsMarkdown: "## Opening statements\n",
+    rebuttalsMarkdown: "## Where the board disagrees\n",
+    repliesMarkdown: "## Replies\n",
+    transcript: "the whole debate",
+  };
+
+  it("stores the session only once the answer exists", async () => {
+    const save = vi.mocked(saveBoardSession);
+    save.mockClear();
+
+    const generate = vi.fn(async () => ({ text: "Hold the spend." }));
+
+    const result = await callStep<{ answer: string }>(chairStep, {
+      inputData: debate,
+      mastra: fakeMastra(generate as Generate),
+    });
+
+    expect(result.answer).toBe("Hold the spend.");
+
+    // A session written by the earlier render step would have reopened as an
+    // argument with no conclusion.
+    expect(save).toHaveBeenCalledTimes(1);
+    const [stored] = save.mock.calls[0];
+    expect(stored.answer).toBe("Hold the spend.");
+    expect(stored.question).toBe("Should we cut spend?");
+
+    // The rounds are stored as the CEO reads them, not with the round-one state
+    // the fan-outs carried to get here.
+    expect(Object.keys(stored.objections[0]).sort()).toEqual([
+      "disagrees",
+      "personaId",
+      "statement",
+      "with",
+    ]);
+    expect(Object.keys(stored.replies[0]).sort()).toEqual(["personaId", "text"]);
   });
 });
 

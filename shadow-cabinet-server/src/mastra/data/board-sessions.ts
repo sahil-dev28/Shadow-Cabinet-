@@ -17,18 +17,44 @@ export interface BoardPersonaTurn {
   evidence: BoardEvidence[];
 }
 
+/** One executive's objection, as round two recorded it. */
+export interface BoardObjection {
+  personaId: string;
+  disagrees: boolean;
+  with: string[];
+  statement: string;
+}
+
+export interface BoardReply {
+  personaId: string;
+  text: string;
+}
+
+/**
+ * A thread is never all three at once, so it is derived on read rather than
+ * written as a fourth record that could disagree with the other three.
+ */
+export type ThreadStatus = "running" | "waiting_on_ceo" | "resolved";
+
+/**
+ * The three rounds are stored structured rather than as rendered markdown: the
+ * renderer decides how a round looks, and a second markdown copy alongside the
+ * structure only gives the two something to disagree about.
+ */
 export interface BoardSession {
   threadId: string;
   question: string;
+  answer: string;
   personas: BoardPersonaTurn[];
-  rebuttalsMarkdown: string;
+  objections: BoardObjection[];
+  replies: BoardReply[];
   createdAt: string;
 }
 
 /**
- * The transcript as the CEO saw it. The agent thread cannot serve this: it
- * stores every internal prompt as a user turn, so replaying it would show the
- * question four times and the rebuttal scaffolding in between.
+ * The board as the CEO saw it. The agent thread cannot serve this: it stores
+ * every internal prompt as a user turn, so replaying it would show the question
+ * four times and the rebuttal scaffolding in between.
  */
 const COLLECTION = "board_sessions";
 
