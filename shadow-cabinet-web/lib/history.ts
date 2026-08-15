@@ -1,45 +1,42 @@
 import type { UIMessage } from "ai";
 
-import type { BoardPersonaTurn } from "./board";
-import { PERSONA_TITLES, personaHeading } from "./personas";
+import type {
+  BoardDebate,
+  BoardObjection,
+  BoardPersonaTurn,
+  BoardReply,
+} from "./debate";
 
 interface BoardHistorySession {
   question: string;
+  /** Absent on sessions stored before the chair existed. */
+  answer?: string;
   personas: BoardPersonaTurn[];
-  rebuttalsMarkdown: string;
+  objections: BoardObjection[];
+  replies: BoardReply[];
 }
 
 /**
- * Rebuilds past board sessions as UI messages in the same shape the live
- * stream produces, so a reopened thread renders identically to the run that
- * created it — evidence cards included.
+ * Rebuilds past board sessions as UI messages in the same shape the live stream
+ * produces — the chair's answer as the message text, the three rounds as one
+ * `data-board-debate` part — so a reopened thread renders identically to the
+ * run that created it.
  */
 export function historyToMessages(
   sessions: BoardHistorySession[],
 ): UIMessage[] {
   return sessions.flatMap((session, index): UIMessage[] => {
-    const parts: UIMessage["parts"] = [];
+    // A session from before the chair shipped has rounds but no conclusion.
+    // Replaying it would show an argument that never resolves, so it is dropped
+    // rather than rendered as a board that failed to decide.
+    const answer = session.answer?.trim();
+    if (!answer) return [];
 
-    for (const persona of session.personas) {
-      for (const call of persona.evidence) {
-        parts.push({
-          type: `tool-${call.toolName}`,
-          toolCallId: call.toolCallId,
-          state: "output-available",
-          input: call.input,
-          output: call.output,
-        } as UIMessage["parts"][number]);
-      }
-
-      parts.push({
-        type: "text",
-        text: `${personaHeading(persona.personaId)}\n\n${persona.text.trim()}\n`,
-      });
-    }
-
-    if (session.rebuttalsMarkdown.trim()) {
-      parts.push({ type: "text", text: `\n${session.rebuttalsMarkdown}` });
-    }
+    const debate: BoardDebate = {
+      openings: session.personas ?? [],
+      objections: session.objections ?? [],
+      replies: session.replies ?? [],
+    };
 
     return [
       {
@@ -47,7 +44,20 @@ export function historyToMessages(
         role: "user",
         parts: [{ type: "text", text: session.question }],
       },
-      { id: `history-${index}-board`, role: "assistant", parts },
+      {
+        id: `history-${index}-board`,
+        role: "assistant",
+        parts: [
+          // Evidence rides inside the debate now, so no per-persona tool parts:
+          // replaying them would put the lookups back above the answer.
+          {
+            type: "data-board-debate",
+            id: `history-${index}-debate`,
+            data: debate,
+          },
+          { type: "text", text: answer },
+        ],
+      },
     ];
   });
 }
@@ -71,5 +81,3 @@ export async function fetchBoardHistory(
     return [];
   }
 }
-
-export { PERSONA_TITLES };

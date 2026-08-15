@@ -1,11 +1,7 @@
 import type { UIMessage } from "ai";
 
-import {
-  type BoardResult,
-  type CeoQuestion,
-  runBoardSession,
-} from "@/lib/board";
-import { personaHeading } from "@/lib/personas";
+import { runBoardSession } from "@/lib/board";
+import type { BoardDebate, BoardWaiting } from "@/lib/debate";
 
 const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
@@ -29,52 +25,31 @@ function sse(event: unknown): string {
 }
 
 /**
- * Mastra's `workflowRoute` emits workflow lifecycle events, not text parts, so
- * the rounds are rebuilt here as AI SDK UI parts.
+ * Mastra's `workflowRoute` emits workflow lifecycle events, not UI parts, so
+ * the board is rebuilt here as AI SDK UI parts.
  *
  * One message, not one per persona: repeated start/finish envelopes accumulate
- * into each other and re-render every earlier executive under the next one.
- * `groupPartByType` groups consecutive parts, so each persona still collapses
- * separately as long as its text sits between its calls and the next persona's.
+ * into each other and re-render every earlier part under the next one.
  */
 type Write = (event: unknown) => void;
 
-function writeOpenings(write: Write, personas: BoardResult["personas"]): void {
-  for (const persona of personas) {
-    const id = `${persona.personaId}-opening`;
+/**
+ * The whole debate rides in one part rather than as prose, so the answer stays
+ * the message and the argument stays a section the CEO can fold away.
+ *
+ * Always this id: a data part is replaced in place when a later one repeats its
+ * type and id, which is what lets round one go out early and be overwritten by
+ * the finished debate without the openings appearing twice.
+ */
+const DEBATE_PART_ID = "board-debate";
 
-    // Evidence precedes the position it supports.
-    for (const call of persona.evidence) {
-      write({
-        type: "tool-input-available",
-        toolCallId: call.toolCallId,
-        toolName: call.toolName,
-        input: call.input,
-      });
-      write({
-        type: "tool-output-available",
-        toolCallId: call.toolCallId,
-        output: call.output,
-      });
-    }
-
-    write({ type: "text-start", id });
-    write({
-      type: "text-delta",
-      id,
-      delta: `${personaHeading(persona.personaId)}\n\n${persona.text.trim()}\n`,
-    });
-    write({ type: "text-end", id });
-  }
+function writeDebate(write: Write, debate: BoardDebate): void {
+  write({ type: "data-board-debate", id: DEBATE_PART_ID, data: debate });
 }
 
-/** The board halted: name who asked what, so the pause never looks like a stall. */
-function waitingMarkdown(questions: CeoQuestion[]): string {
-  const asks = questions
-    .map((q) => `**${q.personaId.toUpperCase()} asks:** ${q.question}`)
-    .join("\n\n");
-
-  return `\n## The board is waiting on you\n\n${asks}\n\nAnswer in the box below and the board resumes where it stopped.\n`;
+/** The board halted: who asked what, so the pause never reads as a stall. */
+function writeWaiting(write: Write, waiting: BoardWaiting): void {
+  write({ type: "data-board-waiting", id: "board-waiting", data: waiting });
 }
 
 /**
@@ -147,8 +122,6 @@ export async function POST(req: Request) {
 
       write({ type: "start", messageId: "board-session" });
 
-      let openingsSent = false;
-
       try {
         const resumeRunId = await pendingRunId(threadId, req.signal);
 
@@ -173,27 +146,25 @@ export async function POST(req: Request) {
           threadId,
           signal: req.signal,
           resumeRunId,
-          onRoundOne: (personas) => {
-            openingsSent = true;
-            writeOpenings(write, personas);
-          },
+          // Round one lands roughly ninety seconds before the run ends, so the
+          // positions go out as a debate with the later rounds still empty
+          // rather than making the CEO watch a spinner until the chair speaks.
+          onRoundOne: (openings) =>
+            writeDebate(write, { openings, objections: [], replies: [] }),
         });
 
         if (board.status === "waiting") {
-          const id = "board-waiting";
-          write({ type: "text-start", id });
-          write({ type: "text-delta", id, delta: waitingMarkdown(board.questions) });
-          write({ type: "text-end", id });
+          writeWaiting(write, { questions: board.questions });
         } else {
-          // A run that finishes between polls never fires the callback.
-          if (!openingsSent) writeOpenings(write, board.personas);
+          // Written before the answer, though it is read after it: parts render
+          // in stream order, so the debate section places itself beneath the
+          // answer by layout rather than by arrival.
+          writeDebate(write, board.debate);
 
-          if (board.rebuttalsMarkdown.trim()) {
-            const id = "board-rebuttals";
-            write({ type: "text-start", id });
-            write({ type: "text-delta", id, delta: `\n${board.rebuttalsMarkdown}` });
-            write({ type: "text-end", id });
-          }
+          const id = "board-answer";
+          write({ type: "text-start", id });
+          write({ type: "text-delta", id, delta: board.answer });
+          write({ type: "text-end", id });
         }
       } catch (error) {
         // Reported in-stream rather than as a status code: by the time a board

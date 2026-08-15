@@ -9,7 +9,7 @@ import { runBoardSession } from "./board";
  */
 function fakeFetch(
   statuses: string[],
-  transcript = "## Opening statements\n",
+  answer = "Hold the spend.",
   /** `GET /runs/:runId` answers flat; the `/runs` list wraps rows in `snapshot`. */
   shape: "flat" | "wrapped" = "flat",
 ) {
@@ -38,8 +38,7 @@ function fakeFetch(
       result:
         status === "success"
           ? {
-              transcript,
-              rebuttalsMarkdown: "## Where the board disagrees\n",
+              answer,
               personas: [
                 {
                   personaId: "cfo",
@@ -54,6 +53,15 @@ function fakeFetch(
                   ],
                 },
               ],
+              objections: [
+                {
+                  personaId: "cmo",
+                  disagrees: true,
+                  with: ["cfo"],
+                  statement: "Cutting spend forfeits pipeline.",
+                },
+              ],
+              replies: [{ personaId: "cfo", text: "Payback is 14 months." }],
             }
           : undefined,
       error: status === "failed" ? "step blew up" : undefined,
@@ -81,11 +89,11 @@ describe("runBoardSession", () => {
     });
 
     if (board.status !== "complete") throw new Error("expected a completed board");
-    expect(board.transcript).toBe("## Opening statements\n");
+    expect(board.answer).toBe("Hold the spend.");
     // Each persona keeps its own grounding calls, which is what lets the UI
     // collapse one executive's evidence without folding in the others'.
-    expect(board.personas).toHaveLength(1);
-    expect(board.personas[0].evidence[0].toolName).toBe("compareMetricTool");
+    expect(board.debate.openings).toHaveLength(1);
+    expect(board.debate.openings[0].evidence[0].toolName).toBe("compareMetricTool");
     expect(calls[0]).toBe("POST /api/workflows/boardSession/create-run");
     expect(calls[1]).toBe("POST /api/workflows/boardSession/start?runId=run-1");
     expect(calls.slice(2)).toEqual([
@@ -96,7 +104,7 @@ describe("runBoardSession", () => {
   });
 
   it("still finishes when the run comes back wrapped in a snapshot", async () => {
-    const { impl } = fakeFetch(["running", "success"], "## Opening statements\n", "wrapped");
+    const { impl } = fakeFetch(["running", "success"], "Hold the spend.", "wrapped");
 
     await expect(
       runBoardSession({
@@ -106,7 +114,50 @@ describe("runBoardSession", () => {
         fetchImpl: impl,
         pollIntervalMs: 0,
       }),
-    ).resolves.toMatchObject({ transcript: "## Opening statements\n" });
+    ).resolves.toMatchObject({ answer: "Hold the spend." });
+  });
+
+  it("returns the chair's answer and the three rounds", async () => {
+    const { impl } = fakeFetch(["success"]);
+
+    const board = await runBoardSession({
+      baseUrl: "http://board",
+      question: "Should we cut spend?",
+      threadId: "board-1",
+      fetchImpl: impl,
+      pollIntervalMs: 0,
+    });
+
+    if (board.status !== "complete") throw new Error("expected a completed board");
+    expect(board.answer).toBe("Hold the spend.");
+    expect(board.debate.objections[0].with).toEqual(["cfo"]);
+    expect(board.debate.replies[0].personaId).toBe("cfo");
+  });
+
+  it("refuses a finished run that carries no answer", async () => {
+    const impl = async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/create-run")) {
+        return new Response(JSON.stringify({ runId: "run-1" }), { status: 200 });
+      }
+      if (href.includes("/start")) return new Response("{}", { status: 200 });
+
+      // Three rounds and no recommendation is not a board the CEO can act on.
+      return new Response(
+        JSON.stringify({ status: "success", result: { personas: [], objections: [], replies: [] } }),
+        { status: 200 },
+      );
+    };
+
+    await expect(
+      runBoardSession({
+        baseUrl: "http://board",
+        question: "Should we cut spend?",
+        threadId: "board-1",
+        fetchImpl: impl,
+        pollIntervalMs: 0,
+      }),
+    ).rejects.toThrow(/no answer/);
   });
 
   it("gives up instead of polling forever when the status field is missing", async () => {
@@ -151,7 +202,7 @@ describe("runBoardSession", () => {
               : {},
           result:
             polls >= 3
-              ? { transcript: "t", personas: openings, rebuttalsMarkdown: "r" }
+              ? { answer: "Hold the spend.", personas: openings, objections: [], replies: [] }
               : undefined,
         }),
         { status: 200 },
@@ -221,7 +272,7 @@ describe("runBoardSession", () => {
       return new Response(
         JSON.stringify({
           status: "success",
-          result: { transcript: "t", personas: [], rebuttalsMarkdown: "r" },
+          result: { answer: "Hold the spend.", personas: [], objections: [], replies: [] },
         }),
         { status: 200 },
       );
@@ -261,7 +312,7 @@ describe("runBoardSession", () => {
               }
             : {
                 status: "success",
-                result: { transcript: "t", personas: [], rebuttalsMarkdown: "r" },
+                result: { answer: "Hold the spend.", personas: [], objections: [], replies: [] },
               },
         ),
         { status: 200 },

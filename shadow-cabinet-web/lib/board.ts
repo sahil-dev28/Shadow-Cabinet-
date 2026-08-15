@@ -1,3 +1,11 @@
+import type {
+  BoardDebate,
+  BoardObjection,
+  BoardPersonaTurn,
+  BoardReply,
+  CeoQuestion,
+} from "./debate";
+
 type FetchImpl = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface RunBoardSessionOptions {
@@ -17,38 +25,25 @@ export interface RunBoardSessionOptions {
   resumeRunId?: string;
 }
 
-export interface BoardEvidence {
-  toolCallId: string;
-  toolName: string;
-  input: unknown;
-  output: unknown;
-}
-
-export interface BoardPersonaTurn {
-  personaId: string;
-  text: string;
-  evidence: BoardEvidence[];
-}
-
-export interface BoardResult {
-  transcript: string;
-  personas: BoardPersonaTurn[];
-  rebuttalsMarkdown: string;
-}
-
-export interface CeoQuestion {
-  personaId: string;
-  question: string;
-}
-
-/** A board either finishes, or halts waiting on the CEO. */
+/**
+ * A board either finishes with the chair's answer, or halts waiting on the CEO.
+ *
+ * The answer and the debate are separate because they are rendered separately:
+ * the answer is the message the CEO reads, the debate is the argument folded
+ * underneath it.
+ */
 export type BoardOutcome =
-  | ({ status: "complete" } & BoardResult)
+  | { status: "complete"; answer: string; debate: BoardDebate }
   | { status: "waiting"; questions: CeoQuestion[] };
 
 interface RunSnapshot {
   status?: string;
-  result?: Partial<BoardResult>;
+  result?: {
+    answer?: string;
+    personas?: BoardPersonaTurn[];
+    objections?: BoardObjection[];
+    replies?: BoardReply[];
+  };
   error?: unknown;
   steps?: Record<
     string,
@@ -77,7 +72,7 @@ async function asJson<T>(response: Response, what: string): Promise<T> {
 }
 
 /**
- * Runs one board session and returns its transcript.
+ * Runs one board session and returns the chair's answer with the debate behind it.
  *
  * Started detached and polled, not awaited in one request: Mastra wraps every
  * route in `timeout(server?.timeout ?? 180_000)`, and a board regularly runs
@@ -174,15 +169,20 @@ export async function runBoardSession({
     }
 
     if (status === "success") {
-      const { transcript, personas, rebuttalsMarkdown } = snapshot.result ?? {};
-      if (!transcript) {
-        throw new Error("Board run succeeded but returned no transcript.");
+      const { answer, personas, objections, replies } = snapshot.result ?? {};
+      // The debate alone is not a result: the CEO asked for a decision, so a
+      // run that reached the end without one is a failure, not a partial board.
+      if (!answer) {
+        throw new Error("Board run succeeded but the chair returned no answer.");
       }
       return {
         status: "complete",
-        transcript,
-        personas: personas ?? [],
-        rebuttalsMarkdown: rebuttalsMarkdown ?? "",
+        answer,
+        debate: {
+          openings: personas ?? [],
+          objections: objections ?? [],
+          replies: replies ?? [],
+        },
       };
     }
 
