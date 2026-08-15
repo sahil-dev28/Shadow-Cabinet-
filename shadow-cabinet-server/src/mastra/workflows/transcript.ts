@@ -77,3 +77,57 @@ export function formatOpeningsForRebuttal(
     )
     .join("\n\n");
 }
+
+export interface ReplyEntry {
+  personaId: PersonaId;
+  text: string;
+}
+
+/** Only these personas are called in round three. Usually one or two, not four. */
+export function personasNamedIn(entries: RebuttalEntry[]): PersonaId[] {
+  const named = new Set<PersonaId>();
+  for (const entry of filterDisagreements(entries)) {
+    for (const target of entry.with) named.add(target);
+  }
+
+  return PERSONA_IDS.filter((id) => named.has(id));
+}
+
+export function objectionsAimedAt(
+  entries: RebuttalEntry[],
+  target: PersonaId,
+): RebuttalEntry[] {
+  return filterDisagreements(entries).filter((entry) =>
+    entry.with.includes(target),
+  );
+}
+
+/**
+ * A persona replying sees only what was said about it. Showing the whole
+ * round invites it to answer objections aimed at someone else, which is the
+ * fourth round this design does not have.
+ */
+export function formatObjectionsForReply(
+  entries: RebuttalEntry[],
+  target: PersonaId,
+): string {
+  return objectionsAimedAt(entries, target)
+    .map(
+      (entry) =>
+        `${entry.personaId.toUpperCase()} (${PERSONAS[entry.personaId].title}) objected:\n${entry.statement.trim()}`,
+    )
+    .join("\n\n");
+}
+
+export function renderReplyRound(entries: ReplyEntry[]): string {
+  if (entries.length === 0) {
+    return "## Replies\n\nNo replies were needed: nobody was objected to.\n";
+  }
+
+  const sections = sortByBoardOrder(entries).map(
+    (entry) =>
+      `**${entry.personaId.toUpperCase()} replies**\n\n${entry.text.trim()}`,
+  );
+
+  return `## Replies\n\n${sections.join("\n\n")}\n`;
+}
