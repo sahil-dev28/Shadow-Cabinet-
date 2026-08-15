@@ -1,3 +1,45 @@
+import { z } from "zod";
+
+/**
+ * Shape only, no business rules: an upload that parses is accepted even if the
+ * figures are odd, because the board's job is to argue about odd figures. What
+ * this stops is a malformed file becoming a crash inside a tool call three
+ * minutes into a debate, where the CEO sees an agent fail rather than a
+ * rejected upload.
+ */
+export const segmentSchema = z.object({
+  name: z.string(),
+  revenue: z.number(),
+  grossMarginPct: z.number(),
+});
+
+export const quarterSchema = z.object({
+  period: z.string().min(1),
+  revenue: z.number(),
+  cogs: z.number(),
+  grossProfit: z.number(),
+  grossMarginPct: z.number(),
+  salesMarketing: z.number(),
+  rnd: z.number(),
+  ga: z.number(),
+  operatingIncome: z.number(),
+  operatingMarginPct: z.number(),
+  cash: z.number(),
+  headcount: z.number(),
+  newCustomers: z.number(),
+  churnPct: z.number(),
+  cac: z.number(),
+  ltv: z.number(),
+  segments: z.array(segmentSchema),
+});
+
+export const companyDataSchema = z.object({
+  company: z.string().min(1),
+  currency: z.string().min(1),
+  unit: z.string().min(1),
+  quarters: z.array(quarterSchema).min(1),
+});
+
 export interface Segment {
   name: string;
   revenue: number;
