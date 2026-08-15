@@ -1,7 +1,7 @@
 import { chatRoute, workflowRoute } from "@mastra/ai-sdk";
 import { Mastra } from "@mastra/core/mastra";
 
-import { cfoAgent, cmoAgent, cooAgent, csoAgent } from "./agents/index.ts";
+import { cfoAgent, chairAgent, cmoAgent, cooAgent, csoAgent } from "./agents/index.ts";
 import { boardHistoryRoute } from "./routes/board-history.ts";
 import { boardReceptionRoute } from "./routes/board-reception.ts";
 import { companyDataUploadRoute } from "./routes/company-data-upload.ts";
@@ -9,7 +9,7 @@ import { createStorage } from "./storage/index.ts";
 import { boardSessionWorkflow } from "./workflows/board-session.ts";
 
 export const mastra = new Mastra({
-  agents: { cfoAgent, cmoAgent, cooAgent, csoAgent },
+  agents: { cfoAgent, cmoAgent, cooAgent, csoAgent, chairAgent },
   workflows: { boardSession: boardSessionWorkflow },
   storage: createStorage(),
   server: {

@@ -547,10 +547,59 @@ export const renderDebateStep = createStep({
   },
 });
 
+const boardAnswerSchema = z.object({
+  answer: z.string(),
+  question: z.string(),
+  threadId: z.string(),
+  personas: z.array(personaTurnSchema),
+  objections: z.array(objectionSchema),
+  replies: z.array(replyTurnSchema),
+  transcript: z.string(),
+});
+
+/**
+ * The chair is the board's output: three rounds of argument become the one
+ * answer the CEO reads. It is deliberately not wrapped in the `try/catch` the
+ * persona steps use — a board with no answer has nothing to show, so a chair
+ * that fails should fail the run rather than resolve to an empty recommendation.
+ */
+export const chairStep = createStep({
+  id: "chair",
+  inputSchema: debateStateSchema,
+  outputSchema: boardAnswerSchema,
+  execute: async ({ inputData, mastra }) => {
+    const agent = mastra.getAgentById("chair-agent");
+    // Already assembled by `renderDebateStep`; rebuilding it here would let the
+    // two drift.
+    const { transcript } = inputData;
+
+    const response = await agent.generate(
+      `The CEO asked: "${inputData.question}"
+
+Your board debated it:
+
+${transcript}
+
+Write the answer.`,
+      { memory: { resource: "ceo", thread: inputData.threadId } },
+    );
+
+    return {
+      answer: response.text,
+      question: inputData.question,
+      threadId: inputData.threadId,
+      personas: inputData.personas,
+      objections: inputData.objections,
+      replies: inputData.replies,
+      transcript,
+    };
+  },
+});
+
 export const boardSessionWorkflow = createWorkflow({
   id: "boardSession",
   inputSchema: boardInputSchema,
-  outputSchema: debateStateSchema,
+  outputSchema: boardAnswerSchema,
 })
   .map(async ({ inputData }) =>
     PERSONA_IDS.map((personaId) => ({
@@ -578,4 +627,5 @@ export const boardSessionWorkflow = createWorkflow({
   .map(async ({ inputData }) => toReplyInputs(inputData))
   .foreach(replyStep, { concurrency: 4 })
   .then(renderDebateStep)
+  .then(chairStep)
   .commit();
