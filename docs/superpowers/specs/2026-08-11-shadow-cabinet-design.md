@@ -152,10 +152,17 @@ rather than in this build.
 
 ## Grounding
 
-P&L figures and KPIs are uploaded as CSV or JSON and loaded into MongoDB
-at session start. Agents do not receive this data as static text inside
-the system prompt. Each agent fetches numbers on demand through a small
-set of narrow tools:
+P&L figures and KPIs are uploaded as CSV or JSON and written to a JSON file
+beside the seed dataset, gitignored, which the grounding tools read. Mongo is
+deliberately not in this path: it holds board threads only. Grounding that
+depended on a database would break for a reviewer who clones the repo and
+points at an unseeded cluster, and the storage adapter exposes no key-value
+domain to put a single document in anyway. The seed dataset ships in the repo,
+so the board answers grounded questions on a fresh checkout with no database
+and no upload.
+
+Agents do not receive this data as static text inside the system prompt. Each
+agent fetches numbers on demand through a small set of narrow tools:
 
 - `listPeriods()` — which quarters exist, so an agent never guesses a
   period name
@@ -255,10 +262,15 @@ only that agent and skips the three round debate and the chair entirely,
 since there is nothing to debate and nothing to synthesise. Those replies
 render as a plain single agent message inside the same thread.
 
-**Chain of Thought inside an agent's message** stays scoped to that agent's
-own grounding tool calls, collapsed, labelled as evidence rather than
-thinking, so the CEO can confirm a persona actually queried the numbers it
-cited. This is separate from the debate section and does not nest with it.
+**Grounding evidence attaches to the persona that fetched it.** Each
+persona's tool calls sit with that persona's own opening inside the debate
+section, collapsed, labelled as evidence rather than thinking, so the CEO can
+confirm an executive actually queried the numbers it cited. The debate section
+itself is never wrapped in a Chain of Thought container. The rule being
+protected is that nothing collapses twice: one disclosure to open the debate,
+one to open a persona's evidence, and no third layer between them. A message
+addressed to a single persona carries the same evidence disclosure on the
+reply itself, since there is no debate section to sit inside.
 
 Implementation note: assistant-ui's built in Chain of Thought groups
 reasoning and tool-call parts from a single agent's stream. The debate is

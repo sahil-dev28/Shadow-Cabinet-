@@ -1163,11 +1163,99 @@ export function BoardDebateSection({
 
 - [ ] **Step 3: Open by default on a thread's first answer**
 
-The spec wants the debate open the first time a thread produces an answer, then following whatever the CEO last chose, persisted per thread. Store the choice in `localStorage` under `shadow-cabinet:debate:<threadId>`; absence means open. Read it in the component that registers the renderer so `defaultOpen` is decided once per thread, not per message.
+Create `shadow-cabinet-web/lib/use-debate-open.ts`. Absence of a stored value
+means open, which is what makes a thread's first answer show the argument:
+
+```ts
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+const key = (threadId: string) => `shadow-cabinet:debate:${threadId}`;
+
+/**
+ * Open on a thread's first answer, then whatever the CEO last chose. Reads on
+ * mount rather than during render: `localStorage` does not exist on the server,
+ * and touching it during render makes the first client paint disagree with the
+ * server's, which React reports as a hydration error.
+ */
+export function useDebateOpen(threadId: string): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(key(threadId));
+    if (stored !== null) setOpen(stored === "open");
+  }, [threadId]);
+
+  const choose = useCallback(
+    (next: boolean) => {
+      setOpen(next);
+      window.localStorage.setItem(key(threadId), next ? "open" : "closed");
+    },
+    [threadId],
+  );
+
+  return [open, choose];
+}
+```
+
+`BoardDebateSection` then takes `threadId` instead of `defaultOpen` and calls
+this hook, replacing its local `useState`. Its toggle calls `choose(!open)`.
 
 - [ ] **Step 4: Register it**
 
-Register `board-debate` → `BoardDebateSection` and `board-waiting` → the Task 8 component, using the API confirmed in Step 1, inside `Thread` or `Assistant` — wherever the runtime context is available.
+Signature verified against `@assistant-ui/core@0.3.9`:
+
+```ts
+declare const useAssistantDataUI: (dataUI: { name: string; render: DataMessagePartComponent } | null) => void;
+type DataMessagePartProps<T> = MessagePartState & { type: "data"; name: string; data: T };
+```
+
+Two details that are easy to get wrong and are not guesses:
+
+- `name` is the **bare** name, `"board-debate"`, not `"data-board-debate"`. The
+  wire format is `data-<name>`; the runtime part is `{ type: "data", name, data }`
+  with the prefix already stripped.
+- The hook registers one renderer per call, so call it twice.
+
+Create `shadow-cabinet-web/components/assistant-ui/board-data-ui.tsx`:
+
+```tsx
+"use client";
+
+import { useAssistantDataUI } from "@assistant-ui/react";
+
+import type { BoardDebate, BoardWaiting } from "@/lib/debate";
+import { BoardDebateSection } from "@/components/assistant-ui/board-debate";
+import { BoardWaitingNotice } from "@/components/assistant-ui/board-waiting";
+
+/**
+ * Registers the board's data renderers for as long as it is mounted. Rendered
+ * inside AssistantRuntimeProvider — the hook writes into runtime context, so it
+ * throws outside one.
+ */
+export function BoardDataUI({ threadId }: { threadId: string }) {
+  useAssistantDataUI({
+    name: "board-debate",
+    render: ({ data }: { data: BoardDebate }) => (
+      <BoardDebateSection data={data} threadId={threadId} />
+    ),
+  });
+
+  useAssistantDataUI({
+    name: "board-waiting",
+    render: ({ data }: { data: BoardWaiting }) => <BoardWaitingNotice data={data} />,
+  });
+
+  return null;
+}
+```
+
+Mount it in `app/assistant.tsx` as the first child of `AssistantRuntimeProvider`,
+above `SidebarProvider`: `<BoardDataUI threadId={threadId} />`.
+
+`thread.tsx` already routes `case "data": return part.dataRendererUI;` — leave
+that switch alone. Registration is what fills `dataRendererUI`.
 
 - [ ] **Step 5: Verify in the browser**
 
@@ -1233,7 +1321,65 @@ export function BoardWaitingNotice({ data }: { data: BoardWaiting }) {
 
 - [ ] **Step 2: Land a returning CEO on the same state**
 
-`page.tsx` already fetches history. When `status === "waiting_on_ceo"`, append a synthetic assistant message carrying a `board-waiting` data part built from `pending.questions`, so reopening the URL shows the waiting room rather than an empty composer.
+The seeded message uses the **wire** shape, `type: "data-board-waiting"` —
+`UIMessage` parts carry the prefix; only the runtime part drops it. Verified
+against `ai@7`: `type DataUIPart = { type: \`data-${NAME}\`; id?: string; data }`.
+
+In `lib/history.ts`, widen the fetch to return the pending questions too:
+
+```ts
+export interface BoardHistory {
+  messages: UIMessage[];
+  status: "running" | "waiting_on_ceo" | "resolved";
+}
+
+export async function fetchBoardHistory(
+  baseUrl: string,
+  threadId: string,
+): Promise<BoardHistory> {
+  try {
+    const response = await fetch(`${baseUrl}/board/${threadId}/messages`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return { messages: [], status: "running" };
+
+    const { sessions, pending, status } = (await response.json()) as {
+      sessions?: BoardHistorySession[];
+      pending?: { questions: CeoQuestion[] } | null;
+      status?: BoardHistory["status"];
+    };
+
+    const messages = historyToMessages(sessions ?? []);
+
+    // A thread stopped mid-question reopens into the room that is waiting.
+    if (status === "waiting_on_ceo" && pending) {
+      messages.push({
+        id: "history-waiting",
+        role: "assistant",
+        parts: [
+          {
+            type: "data-board-waiting",
+            id: "board-waiting",
+            data: { questions: pending.questions },
+          } as UIMessage["parts"][number],
+        ],
+      });
+    }
+
+    return { messages, status: status ?? "running" };
+  } catch {
+    return { messages: [], status: "running" };
+  }
+}
+```
+
+`app/board/[threadId]/page.tsx` then reads `.messages`:
+
+```tsx
+  const { messages } = await fetchBoardHistory(MASTRA_API_URL, threadId);
+
+  return <Assistant threadId={threadId} initialMessages={messages} />;
+```
 
 - [ ] **Step 3: Verify**
 
@@ -1262,7 +1408,74 @@ git commit -m "feat: make the waiting-on-CEO state a real screen"
 
 - [ ] **Step 1: Add the selector**
 
-Add a `<select>` beside the composer in `assistant.tsx`, defaulting to "Whole board", with one option per persona. Hold the choice in component state and pass it through the transport body alongside `threadId`: `body: { threadId, target }`.
+**Plan correction, verified:** the composer is not in `assistant.tsx`. It lives
+in `components/assistant-ui/thread.tsx` at `ComposerPrimitive.Root` (~line 214),
+rendered by `<Thread />`. The selector goes there, and the choice has to reach
+`assistant.tsx`, which owns the transport — so it travels through context, not
+props.
+
+Create `shadow-cabinet-web/lib/board-target.tsx`:
+
+```tsx
+"use client";
+
+import { createContext, useContext, useState } from "react";
+
+export type BoardTarget = "board" | "cfo" | "cmo" | "coo" | "cso";
+
+const BoardTargetContext = createContext<{
+  target: BoardTarget;
+  setTarget: (target: BoardTarget) => void;
+}>({ target: "board", setTarget: () => {} });
+
+export function BoardTargetProvider({ children }: { children: React.ReactNode }) {
+  const [target, setTarget] = useState<BoardTarget>("board");
+
+  return (
+    <BoardTargetContext value={{ target, setTarget }}>{children}</BoardTargetContext>
+  );
+}
+
+export const useBoardTarget = () => useContext(BoardTargetContext);
+```
+
+In `thread.tsx`, inside `ComposerPrimitive.Root` and beside `<ComposerAction />`:
+
+```tsx
+const ComposerTarget: FC = () => {
+  const { target, setTarget } = useBoardTarget();
+
+  return (
+    <select
+      aria-label="Who answers"
+      value={target}
+      onChange={(event) => setTarget(event.target.value as BoardTarget)}
+      className="text-muted-foreground bg-transparent text-xs outline-none"
+    >
+      <option value="board">Whole board</option>
+      {Object.entries(PERSONA_TITLES).map(([id, title]) => (
+        <option key={id} value={id}>
+          {id.toUpperCase()} — {title}
+        </option>
+      ))}
+    </select>
+  );
+};
+```
+
+In `assistant.tsx`, wrap the tree in `BoardTargetProvider`, then read the target
+where the runtime is built. `useChatRuntime` captures `body` once, so a plain
+value would freeze on "board"; send a function-free snapshot by moving the
+transport into a child component that re-creates it when the target changes, or
+read the target inside `prepareSendMessagesRequest` if the installed
+`AssistantChatTransport` exposes it. Confirm which before writing:
+
+```bash
+cd /Users/abhishekkolge/projects/shadow-cabinet/shadow-cabinet-web
+grep -rn "prepareSendMessagesRequest\|body" node_modules/@assistant-ui/react-ai-sdk/dist/ui/use-chat/AssistantChatTransport.d.ts | head
+```
+
+Prefer whichever the type supports; do not assume `body` re-reads on every send.
 
 - [ ] **Step 2: Route a targeted message**
 
