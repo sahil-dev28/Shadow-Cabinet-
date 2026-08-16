@@ -1,11 +1,13 @@
 "use client";
 
 import type { UIMessage } from "ai";
+import { useRef } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import {
   useChatRuntime,
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
+import { BoardTargetProvider, useBoardTarget } from "@/lib/board-target";
 import { Thread } from "@/components/assistant-ui/thread";
 import { BoardDataUI } from "@/components/assistant-ui/board-data-ui";
 import {
@@ -30,7 +32,28 @@ export const Assistant = ({
 }: {
   threadId: string;
   initialMessages?: UIMessage[];
+}) => (
+  // Outside the workspace rather than inside it: the workspace reads the target
+  // to build the transport, and a component cannot consume its own provider.
+  <BoardTargetProvider>
+    <BoardWorkspace threadId={threadId} initialMessages={initialMessages} />
+  </BoardTargetProvider>
+);
+
+const BoardWorkspace = ({
+  threadId,
+  initialMessages,
+}: {
+  threadId: string;
+  initialMessages: UIMessage[];
 }) => {
+  const { target } = useBoardTarget();
+  // The runtime holds on to one transport, so a `body` closed over `target`
+  // would keep posting whichever executive was selected first. Reading through
+  // a ref survives that: its identity never changes, its contents do.
+  const targetRef = useRef(target);
+  targetRef.current = target;
+
   const runtime = useChatRuntime({
     messages: initialMessages,
     // No `sendAutomaticallyWhen`: tools run server-side, so a reply carrying
@@ -38,7 +61,9 @@ export const Assistant = ({
     // calls would fire a fresh board session after every response, forever.
     transport: new AssistantChatTransport({
       api: "/api/chat",
-      body: { threadId },
+      // A function, not an object: `body` is resolved per send, which is the
+      // only reason the selector can still change the target mid-thread.
+      body: () => ({ threadId, target: targetRef.current }),
     }),
   });
 

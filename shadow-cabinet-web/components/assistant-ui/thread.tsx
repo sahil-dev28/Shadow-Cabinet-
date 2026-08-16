@@ -22,6 +22,12 @@ import {
 } from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
+import { useBoardTarget } from "@/lib/board-target";
+import {
+  PERSONA_IDS,
+  PERSONA_TITLES,
+  type BoardTarget,
+} from "@/lib/personas";
 import { cn } from "@/lib/utils";
 import {
   ActionBarMorePrimitive,
@@ -224,10 +230,38 @@ const Composer: FC = () => {
   );
 };
 
+/**
+ * A whole board is nine agent calls and several minutes; one executive is one
+ * call. Which of the two the CEO gets is chosen here, next to the send button,
+ * because it is a property of the message being sent and not of the thread.
+ */
+const ComposerTarget: FC = () => {
+  const { target, setTarget } = useBoardTarget();
+
+  return (
+    <select
+      aria-label="Who answers"
+      value={target}
+      onChange={(event) => setTarget(event.target.value as BoardTarget)}
+      className="aui-composer-target text-muted-foreground hover:text-foreground focus-visible:ring-ring h-7 cursor-pointer rounded-full bg-transparent px-1.5 text-xs outline-none focus-visible:ring-2"
+    >
+      <option value="board">Whole board</option>
+      {PERSONA_IDS.map((personaId) => (
+        <option key={personaId} value={personaId}>
+          {personaId.toUpperCase()} — {PERSONA_TITLES[personaId]}
+        </option>
+      ))}
+    </select>
+  );
+};
+
 const ComposerAction: FC = () => {
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <ComposerAddAttachment />
+      <div className="flex min-w-0 items-center gap-0.5">
+        <ComposerAddAttachment />
+        <ComposerTarget />
+      </div>
       <div className="flex items-center gap-1.5">
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>

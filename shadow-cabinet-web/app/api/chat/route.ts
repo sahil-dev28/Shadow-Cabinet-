@@ -2,6 +2,7 @@ import type { UIMessage } from "ai";
 
 import { runBoardSession } from "@/lib/board";
 import type { BoardDebate, BoardWaiting } from "@/lib/debate";
+import { isPersonaId, type PersonaId } from "@/lib/personas";
 
 const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
@@ -101,8 +102,58 @@ async function reception(
   return (await response.json()) as { convene: boolean; reply: string };
 }
 
+/**
+ * A question put to one executive is one agent call, so it skips the reception
+ * gate, the halted-run check, and the workflow: there is nothing to debate and
+ * no chair to synthesise it. Mastra's own stream already carries the reply and
+ * the tool calls behind it, and the thread's chain-of-thought card renders
+ * those as "Checked N figures" — which is how a targeted reply shows its
+ * evidence without a debate section to sit in.
+ */
+async function askOneExecutive(
+  persona: PersonaId,
+  question: string,
+  threadId: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  const upstream = await fetch(`${MASTRA_API_URL}/chat/${persona}-agent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // `memory` sits at the top level because `chatRoute` spreads everything but
+    // `messages` straight into the agent's execution options. The board's own
+    // resource and thread, so the question and its answer land where the board
+    // reads them on its next turn — which is also why only the new question is
+    // sent: the rest of the thread is already in that memory.
+    body: JSON.stringify({
+      messages: [
+        {
+          id: crypto.randomUUID(),
+          role: "user",
+          parts: [{ type: "text", text: question }],
+        },
+      ],
+      memory: { resource: "ceo", thread: threadId },
+    }),
+    signal,
+  });
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "Content-Type":
+        upstream.headers.get("Content-Type") ?? "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "x-vercel-ai-ui-message-stream": "v1",
+    },
+  });
+}
+
 export async function POST(req: Request) {
-  const { messages, threadId }: { messages: UIMessage[]; threadId?: string } =
+  const {
+    messages,
+    threadId,
+    target = "board",
+  }: { messages: UIMessage[]; threadId?: string; target?: string } =
     await req.json();
 
   const question = lastUserText(messages);
@@ -111,6 +162,17 @@ export async function POST(req: Request) {
   }
   if (!threadId) {
     return Response.json({ error: "Missing threadId." }, { status: 400 });
+  }
+
+  if (target !== "board") {
+    if (!isPersonaId(target)) {
+      return Response.json(
+        { error: `No such executive: ${target}.` },
+        { status: 400 },
+      );
+    }
+
+    return askOneExecutive(target, question, threadId, req.signal);
   }
 
   const encoder = new TextEncoder();
