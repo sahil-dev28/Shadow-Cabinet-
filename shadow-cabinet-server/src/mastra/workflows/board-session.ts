@@ -191,9 +191,14 @@ export const openingStep = createStep({
         questionForCeo: "",
       };
 
+      // Structured output occasionally returns an empty `position` while still
+      // making its tool calls, which renders as an executive with evidence and
+      // no opinion. The prose it did produce is a better answer than a blank.
+      const position = opening.position?.trim() || response.text;
+
       return {
         personaId,
-        text: blocked ?? opening.position,
+        text: blocked ?? position,
         evidence: blocked ? [] : collectEvidence(response),
         questionForCeo: blocked ? "" : opening.questionForCeo.trim(),
         question,

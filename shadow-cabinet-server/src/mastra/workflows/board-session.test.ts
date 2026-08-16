@@ -84,6 +84,22 @@ describe("round one", () => {
     ]);
   });
 
+  it("falls back to the prose when structured output returns an empty position", async () => {
+    const generate = vi.fn(async () => ({
+      text: "Margin fell 4 points, driven by mix.",
+      object: { position: "   ", questionForCeo: "" },
+    }));
+
+    const result = await callStep<{ text: string }>(openingStep, {
+      inputData: { personaId: "cfo", question: "Why did margin fall?", threadId: "t1" },
+      mastra: fakeMastra(generate as Generate),
+    });
+
+    // An executive with evidence and no opinion is worse than one that repeats
+    // itself: this happened live on thread t6-parts.
+    expect(result.text).toBe("Margin fell 4 points, driven by mix.");
+  });
+
   it("reports an executive that threw instead of failing the whole round", async () => {
     const generate = vi.fn(async () => {
       throw new Error("upstream timed out");
