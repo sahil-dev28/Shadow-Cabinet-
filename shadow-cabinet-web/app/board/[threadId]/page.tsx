@@ -9,7 +9,7 @@ export default async function BoardPage({
   params: Promise<{ threadId: string }>;
 }) {
   const { threadId } = await params;
-  const initialMessages = await fetchBoardHistory(MASTRA_API_URL, threadId);
+  const { messages } = await fetchBoardHistory(MASTRA_API_URL, threadId);
 
-  return <Assistant threadId={threadId} initialMessages={initialMessages} />;
+  return <Assistant threadId={threadId} initialMessages={messages} />;
 }

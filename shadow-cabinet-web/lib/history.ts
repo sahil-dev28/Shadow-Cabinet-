@@ -5,7 +5,19 @@ import type {
   BoardObjection,
   BoardPersonaTurn,
   BoardReply,
+  CeoQuestion,
 } from "./debate";
+
+/**
+ * `running` is the catch-all the history route falls back to, so an unknown
+ * thread id reads as a board in progress rather than as an error.
+ */
+export type ThreadStatus = "running" | "waiting_on_ceo" | "resolved";
+
+export interface BoardHistory {
+  messages: UIMessage[];
+  status: ThreadStatus;
+}
 
 interface BoardHistorySession {
   question: string;
@@ -65,19 +77,44 @@ export function historyToMessages(
 export async function fetchBoardHistory(
   baseUrl: string,
   threadId: string,
-): Promise<UIMessage[]> {
+): Promise<BoardHistory> {
   try {
     const response = await fetch(`${baseUrl}/board/${threadId}/messages`, {
       cache: "no-store",
     });
-    if (!response.ok) return [];
+    if (!response.ok) return { messages: [], status: "running" };
 
-    const { sessions } = (await response.json()) as {
+    const { sessions, pending, status } = (await response.json()) as {
       sessions?: BoardHistorySession[];
+      pending?: { questions: CeoQuestion[] } | null;
+      status?: ThreadStatus;
     };
-    return historyToMessages(sessions ?? []);
+
+    const messages = historyToMessages(sessions ?? []);
+
+    // A thread stopped mid-question reopens into the room that is waiting,
+    // rather than into an empty composer that gives the CEO nothing to answer.
+    // Keyed off `waiting_on_ceo` and never off "not resolved": `running` covers
+    // both a live board and a thread id that never existed.
+    if (status === "waiting_on_ceo" && pending) {
+      messages.push({
+        id: "history-waiting",
+        role: "assistant",
+        parts: [
+          // The prefixed wire shape: `UIMessage` parts carry `data-`, and only
+          // the runtime part the renderer is registered for drops it.
+          {
+            type: "data-board-waiting",
+            id: "board-waiting",
+            data: { questions: pending.questions },
+          },
+        ],
+      });
+    }
+
+    return { messages, status: status ?? "running" };
   } catch {
     // A board with no reachable history still has to open.
-    return [];
+    return { messages: [], status: "running" };
   }
 }
