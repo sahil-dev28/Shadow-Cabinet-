@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 // a JSON file into the source tree on every run.
 vi.mock("../data/board-sessions.ts", () => ({
   saveBoardSession: vi.fn(async () => undefined),
+  // Counted by the chair to decide whether this thread still needs a name.
+  listBoardSessions: vi.fn(async () => []),
 }));
 
-import { saveBoardSession } from "../data/board-sessions.ts";
+import { listBoardSessions, saveBoardSession } from "../data/board-sessions.ts";
 import {
   ceoPauseStep,
   chairStep,
@@ -358,6 +360,40 @@ describe("the chair", () => {
       "with",
     ]);
     expect(Object.keys(stored.replies[0]).sort()).toEqual(["personaId", "text"]);
+  });
+
+  it("names the thread on its first session and never again", async () => {
+    const list = vi.mocked(listBoardSessions);
+    const updateThread = vi.fn(async () => undefined);
+    const generate = vi.fn(async () => ({
+      text: "Hold the spend.",
+      object: { title: "Marketing spend and margin" },
+    }));
+    const memory = {
+      getThreadById: async () => ({ metadata: { pinned: true } }),
+      updateThread,
+    };
+    const mastra = () =>
+      fakeMastra(generate as Generate, { getMemory: async () => memory });
+
+    // One stored session: the save just above it wrote this thread's first.
+    list.mockResolvedValueOnce([{}] as never);
+    await callStep(chairStep, { inputData: debate, mastra: mastra() });
+
+    expect(updateThread).toHaveBeenCalledWith({
+      id: "t1",
+      title: "Marketing spend and margin",
+      // Read back and passed through: the signature requires metadata, so
+      // defaulting it to `{}` here would erase whatever the thread carried.
+      metadata: { pinned: true },
+    });
+
+    // A second question on the same thread must not rename it under the CEO.
+    updateThread.mockClear();
+    list.mockResolvedValueOnce([{}, {}] as never);
+    await callStep(chairStep, { inputData: debate, mastra: mastra() });
+
+    expect(updateThread).not.toHaveBeenCalled();
   });
 });
 

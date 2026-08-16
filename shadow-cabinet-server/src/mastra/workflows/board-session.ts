@@ -1,8 +1,9 @@
+import type { Mastra } from "@mastra/core/mastra";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 
 import { PERSONA_IDS, type PersonaId } from "../agents/index.ts";
-import { saveBoardSession } from "../data/board-sessions.ts";
+import { listBoardSessions, saveBoardSession } from "../data/board-sessions.ts";
 import { clearPendingRun, savePendingRun } from "../data/pending-runs.ts";
 import {
   type OpeningEntry,
@@ -553,6 +554,61 @@ const boardAnswerSchema = z.object({
   transcript: z.string(),
 });
 
+const titleSchema = z.object({
+  title: z
+    .string()
+    .describe("Three to six words, no quotes, no trailing period."),
+});
+
+/**
+ * Names a thread for the sidebar, after the question that opened it.
+ *
+ * Every failure is swallowed. By the time this runs the CEO's answer is
+ * already written and stored, and an unnamed thread still lists under its first
+ * question — so losing minutes of debate to a failed rename would be paying a
+ * real price for a cosmetic one.
+ */
+async function titleThread(
+  mastra: Mastra,
+  threadId: string,
+  question: string,
+): Promise<void> {
+  try {
+    const agent = mastra.getAgentById("cfo-agent");
+
+    const response = await agent.generate(
+      `Title this board session in three to six words, as a neutral label a
+busy CEO would recognise in a sidebar. No quotes, no trailing period, no
+persona voice.
+
+Question: "${question}"`,
+      {
+        // Naming is not reasoning, so it gets the cheap model. No `memory`
+        // either: the thread should not carry its own naming prompt as a turn.
+        model: "anthropic/claude-haiku-4-5",
+        structuredOutput: { schema: titleSchema },
+      },
+    );
+
+    const title = response.object?.title?.trim();
+    if (!title) return;
+
+    const memory = await agent.getMemory();
+    const thread = await memory?.getThreadById({ threadId });
+
+    // `metadata` is required by this signature even though it is optional on
+    // the record, so the existing value has to be read and passed back rather
+    // than defaulted — writing `{}` blind would erase it.
+    await memory?.updateThread({
+      id: threadId,
+      title,
+      metadata: thread?.metadata ?? {},
+    });
+  } catch {
+    // See above: naming must never cost the CEO an answer.
+  }
+}
+
 /**
  * The chair is the board's output: three rounds of argument become the one
  * answer the CEO reads. It is deliberately not wrapped in the `try/catch` the
@@ -591,6 +647,14 @@ Write the answer.`,
       objections: inputData.objections,
       replies: inputData.replies,
     });
+
+    // First session only, counted after the save above so the thread that just
+    // answered its opening question sees exactly one. A thread renamed by its
+    // fifth question is one the CEO can no longer find in the sidebar.
+    const sessions = await listBoardSessions(inputData.threadId);
+    if (sessions.length === 1) {
+      await titleThread(mastra, inputData.threadId, inputData.question);
+    }
 
     return {
       answer: response.text,

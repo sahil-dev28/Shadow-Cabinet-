@@ -112,3 +112,47 @@ export async function listBoardSessions(
     .filter((session) => session.threadId === threadId)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
+
+/** One row per thread that has ever produced an answer. */
+export interface BoardThreadSummary {
+  threadId: string;
+  /** The question that opened the thread — its label until it is titled. */
+  firstQuestion: string;
+  /** When the thread last produced an answer, so the sidebar can order by it. */
+  updatedAt: string;
+}
+
+/**
+ * Every thread the board has answered on, newest first. `listBoardSessions`
+ * cannot serve the sidebar: it answers "what happened on this thread", and the
+ * sidebar needs "which threads are there" before it knows any id to ask about.
+ */
+export async function listBoardThreads(): Promise<BoardThreadSummary[]> {
+  const store = collection();
+  const sessions = store
+    ? await store.find({}).sort({ createdAt: 1 }).toArray()
+    : (await readFileSessions()).sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt),
+      );
+
+  // Oldest first above, so the first session seen for a thread is the one that
+  // opened it and every later one only moves `updatedAt` forward.
+  const threads = new Map<string, BoardThreadSummary>();
+  for (const session of sessions) {
+    const seen = threads.get(session.threadId);
+    if (seen) {
+      seen.updatedAt = session.createdAt;
+      continue;
+    }
+
+    threads.set(session.threadId, {
+      threadId: session.threadId,
+      firstQuestion: session.question,
+      updatedAt: session.createdAt,
+    });
+  }
+
+  return [...threads.values()].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
+}

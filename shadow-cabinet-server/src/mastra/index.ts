@@ -4,6 +4,7 @@ import { Mastra } from "@mastra/core/mastra";
 import { cfoAgent, chairAgent, cmoAgent, cooAgent, csoAgent } from "./agents/index.ts";
 import { boardHistoryRoute } from "./routes/board-history.ts";
 import { boardReceptionRoute } from "./routes/board-reception.ts";
+import { boardThreadsRoute } from "./routes/board-threads.ts";
 import { companyDataUploadRoute } from "./routes/company-data-upload.ts";
 import { createStorage } from "./storage/index.ts";
 import { boardSessionWorkflow } from "./workflows/board-session.ts";
@@ -21,6 +22,7 @@ export const mastra = new Mastra({
         workflow: "boardSession",
       }),
       boardHistoryRoute,
+      boardThreadsRoute,
       boardReceptionRoute,
       companyDataUploadRoute,
       // Kept for debugging a single persona in isolation.
