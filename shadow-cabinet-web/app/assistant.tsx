@@ -7,6 +7,7 @@ import {
   AssistantChatTransport,
 } from "@assistant-ui/react-ai-sdk";
 import { Thread } from "@/components/assistant-ui/thread";
+import { BoardDataUI } from "@/components/assistant-ui/board-data-ui";
 import {
   SidebarInset,
   SidebarProvider,
@@ -43,6 +44,7 @@ export const Assistant = ({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
+      <BoardDataUI threadId={threadId} />
       <SidebarProvider>
         <div className="flex h-dvh w-full pr-0.5">
           <ThreadListSidebar />

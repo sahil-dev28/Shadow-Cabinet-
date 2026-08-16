@@ -277,7 +277,10 @@ const AssistantMessage: FC = () => {
     >
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground px-2 leading-relaxed wrap-break-word"
+        // A column rather than a plain block so a part can choose where it
+        // sits: the debate arrives before the chair's answer — the openings
+        // stream while the board is still arguing — but belongs underneath it.
+        className="text-foreground flex flex-col px-2 leading-relaxed wrap-break-word"
       >
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
