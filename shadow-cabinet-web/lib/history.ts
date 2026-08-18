@@ -48,6 +48,9 @@ export function historyToMessages(
       openings: session.personas ?? [],
       objections: session.objections ?? [],
       replies: session.replies ?? [],
+      // Nothing is in flight in a stored session, so it rehydrates into the
+      // settled state rather than into a round that will never finish.
+      phase: "complete",
     };
 
     return [

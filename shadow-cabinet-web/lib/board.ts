@@ -16,11 +16,15 @@ export interface RunBoardSessionOptions {
   fetchImpl?: FetchImpl;
   pollIntervalMs?: number;
   /**
-   * Fires as soon as the opening round is readable, roughly a third of the way
-   * into a session, so the CEO reads four positions while the board is still
-   * arguing instead of watching a spinner for the whole run.
+   * Fires every time the debate visibly grows — after the openings, after the
+   * objections, after the replies, and once more if the board halts — carrying
+   * the fullest state known at that moment, so the CEO watches the argument
+   * build instead of watching a spinner for the whole run.
+   *
+   * Three beats, not twelve: `foreach` publishes a round as one array, so a
+   * single executive finishing early is not observable.
    */
-  onRoundOne?: (personas: BoardPersonaTurn[]) => void;
+  onProgress?: (debate: BoardDebate) => void;
   /** Set when the board is halted on a CEO question and this is the answer. */
   resumeRunId?: string;
 }
@@ -49,11 +53,58 @@ interface RunSnapshot {
     string,
     {
       status?: string;
-      output?: { personas?: BoardPersonaTurn[] };
+      /** Shaped per step, so each reader below narrows it rather than the type. */
+      output?: unknown;
       suspendPayload?: { questions?: CeoQuestion[] };
     }
   >;
 }
+
+/** Round two as the step leaves it: the objection plus the state round three needs. */
+type RebuttalEntry = BoardObjection & Record<string, unknown>;
+
+/** Round three as the step leaves it; `personaId` is null on the placeholder. */
+interface ReplyEntry {
+  personaId: string | null;
+  text: string;
+}
+
+function readOpenings(output: unknown): BoardPersonaTurn[] | undefined {
+  const personas = (output as { personas?: BoardPersonaTurn[] } | undefined)
+    ?.personas;
+  return personas?.length ? personas : undefined;
+}
+
+/**
+ * Round two carries the whole of round one along with every entry so the third
+ * fan-out has something to work from; the UI wants none of that plumbing.
+ */
+function readObjections(output: unknown): BoardObjection[] | undefined {
+  if (!Array.isArray(output)) return undefined;
+
+  return (output as RebuttalEntry[]).map((entry) => ({
+    personaId: entry.personaId,
+    disagrees: entry.disagrees,
+    with: entry.with ?? [],
+    statement: entry.statement ?? "",
+  }));
+}
+
+/**
+ * An unopposed board still fans one persona-less item through round three so the
+ * debate state survives to be rendered. It is plumbing, not a reply, so an empty
+ * array here means "nobody needed to reply", not "the round has not run".
+ */
+function readReplies(output: unknown): BoardReply[] | undefined {
+  if (!Array.isArray(output)) return undefined;
+
+  return (output as ReplyEntry[])
+    .filter((entry) => entry.personaId !== null)
+    .map((entry) => ({ personaId: entry.personaId as string, text: entry.text }));
+}
+
+/** The three observable beats, in the order the workflow publishes them. */
+const ROUNDS = ["openings", "objections", "replies"] as const;
 
 /**
  * `GET /runs/:runId` returns the run flat; the `/runs` list wraps rows in
@@ -85,7 +136,7 @@ export async function runBoardSession({
   signal,
   fetchImpl = fetch,
   pollIntervalMs = 2000,
-  onRoundOne,
+  onProgress,
   resumeRunId,
 }: RunBoardSessionOptions): Promise<BoardOutcome> {
   const workflow = `${baseUrl}/api/workflows/boardSession`;
@@ -134,12 +185,16 @@ export async function runBoardSession({
     }
   }
 
-  // Resuming: the openings already on screen are the pre-answer ones, and the
-  // run reports `suspended` until it picks the answer up, so neither signal
-  // means what it does on a fresh start.
+  // Resuming: the run still reports `suspended` until it picks the answer up,
+  // so that status does not mean on a resume what it means on a fresh start.
   const resuming = Boolean(resumeRunId);
-  let roundOneSent = resuming;
+  // Index into `ROUNDS` of the last beat handed over, so a round is reported on
+  // the poll that first exposes it and never again. A resumed board reports its
+  // openings afresh: the stream reuses one message id, so answering the board
+  // replaces the message the openings were in.
+  let reported = -1;
   let leftSuspended = !resuming;
+  let latest: BoardDebate | undefined;
 
   for (;;) {
     signal?.throwIfAborted();
@@ -151,20 +206,39 @@ export async function runBoardSession({
       ),
     );
 
-    const openings = snapshot.steps?.["render-openings"]?.output?.personas;
-    if (!roundOneSent && openings?.length) {
-      roundOneSent = true;
-      onRoundOne?.(openings);
+    const steps = snapshot.steps ?? {};
+    const openings = readOpenings(steps["render-openings"]?.output);
+
+    if (openings) {
+      const objections = readObjections(steps["rebuttal"]?.output);
+      const replies = readReplies(steps["reply"]?.output);
+      const round = replies ? 2 : objections ? 1 : 0;
+
+      const debate: BoardDebate = {
+        openings,
+        objections: objections ?? [],
+        replies: replies ?? [],
+        phase: ROUNDS[round],
+      };
+      latest = debate;
+
+      if (round > reported) {
+        reported = round;
+        onProgress?.(debate);
+      }
     }
 
     const status = snapshot.status;
     if (status && status !== "suspended") leftSuspended = true;
 
     if (status === "suspended" && leftSuspended) {
+      // A halted board is not a working one. Without this the objections would
+      // sit under a spinner that never resolves, because nothing is running.
+      if (latest) onProgress?.({ ...latest, phase: "paused" });
+
       return {
         status: "waiting",
-        questions:
-          snapshot.steps?.["ceo-question"]?.suspendPayload?.questions ?? [],
+        questions: steps["ceo-question"]?.suspendPayload?.questions ?? [],
       };
     }
 
@@ -182,6 +256,7 @@ export async function runBoardSession({
           openings: personas ?? [],
           objections: objections ?? [],
           replies: replies ?? [],
+          phase: "complete",
         },
       };
     }

@@ -39,8 +39,8 @@ type Write = (event: unknown) => void;
  * the message and the argument stays a section the CEO can fold away.
  *
  * Always this id: a data part is replaced in place when a later one repeats its
- * type and id, which is what lets round one go out early and be overwritten by
- * the finished debate without the openings appearing twice.
+ * type and id, which is what turns a stream of rounds into one section that
+ * grows, rather than three sections stacked on top of each other.
  */
 const DEBATE_PART_ID = "board-debate";
 
@@ -208,11 +208,10 @@ export async function POST(req: Request) {
           threadId,
           signal: req.signal,
           resumeRunId,
-          // Round one lands roughly ninety seconds before the run ends, so the
-          // positions go out as a debate with the later rounds still empty
-          // rather than making the CEO watch a spinner until the chair speaks.
-          onRoundOne: (openings) =>
-            writeDebate(write, { openings, objections: [], replies: [] }),
+          // Each round goes out the moment it is readable — openings, then
+          // objections, then replies — so the section fills in over the several
+          // minutes the board takes, instead of arriving whole at the end.
+          onProgress: (debate) => writeDebate(write, debate),
         });
 
         if (board.status === "waiting") {
