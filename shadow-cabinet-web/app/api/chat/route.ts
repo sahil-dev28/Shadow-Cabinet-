@@ -8,8 +8,9 @@ const MASTRA_API_URL = process.env.MASTRA_API_URL ?? "http://localhost:4111";
 
 // A contested board is nine agent calls with tool use; answering a paused one
 // adds a revision round on top and has measured over nine minutes. Serverless
-// platforms cap well below this — see the README on running the board.
-export const maxDuration = 800;
+// platforms cap well below this — see the README on running the board. 300 is
+// the Vercel Hobby ceiling; raise it (up to 800) on Pro.
+export const maxDuration = 300;
 
 function lastUserText(messages: UIMessage[]): string {
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
