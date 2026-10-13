@@ -1,6 +1,7 @@
 import { registerApiRoute } from "@mastra/core/server";
 
 import { listBoardThreads } from "../data/board-sessions.ts";
+import type { BoardThreadMetadata } from "./board-thread.ts";
 
 /** Every board thread belongs to the same CEO in this prototype. */
 const RESOURCE_ID = "ceo";
@@ -48,6 +49,7 @@ export const boardThreadsRoute = registerApiRoute("/board/threads", {
 
       const titles = new Map<string, string>();
       const touchedAt = new Map<string, string>();
+      const metadata = new Map<string, BoardThreadMetadata>();
       for (const thread of listed?.threads ?? []) {
         const title = thread.title?.trim();
         if (title) titles.set(thread.id, title);
@@ -56,17 +58,33 @@ export const boardThreadsRoute = registerApiRoute("/board/threads", {
         if (!Number.isNaN(touched.getTime())) {
           touchedAt.set(thread.id, touched.toISOString());
         }
+
+        if (thread.metadata) {
+          metadata.set(thread.id, thread.metadata as BoardThreadMetadata);
+        }
       }
 
       const threads = stored
-        .map((thread) => ({
-          threadId: thread.threadId,
-          title:
-            titles.get(thread.threadId) ?? fallbackTitle(thread.firstQuestion),
-          // Mastra's clock moves on every agent turn, the session's only when a
-          // board finishes. Prefer Mastra's so a resumed thread sorts as recent.
-          updatedAt: touchedAt.get(thread.threadId) ?? thread.updatedAt,
-        }))
+        .map((thread) => {
+          const meta = metadata.get(thread.threadId);
+
+          return {
+            threadId: thread.threadId,
+            title:
+              titles.get(thread.threadId) ?? fallbackTitle(thread.firstQuestion),
+            // Mastra's clock moves on every agent turn, the session's only when
+            // a board finishes. Prefer Mastra's so a resumed thread sorts as
+            // recent.
+            updatedAt: touchedAt.get(thread.threadId) ?? thread.updatedAt,
+            // The session's own clock, and deliberately not the one above.
+            // Unread means "answered since you last looked", and only this one
+            // moves on an answer — Mastra's would move on the very write that
+            // marks the thread read, so a row keyed off it could never be read.
+            answeredAt: thread.updatedAt,
+            pinned: meta?.pinned === true,
+            readAt: meta?.readAt ?? null,
+          };
+        })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
       // Deliberately keyed off the stored sessions rather than off Mastra's

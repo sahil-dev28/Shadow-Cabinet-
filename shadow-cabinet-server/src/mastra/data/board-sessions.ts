@@ -113,6 +113,29 @@ export async function listBoardSessions(
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+/**
+ * Every session on one thread, gone.
+ *
+ * Deliberately the first store a thread deletion touches: the sidebar lists
+ * from these rows, so clearing them first means a half-finished delete leaves
+ * no row pointing at a thread whose memory has already been removed.
+ */
+export async function deleteBoardSessions(threadId: string): Promise<void> {
+  const store = collection();
+  if (store) {
+    await store.deleteMany({ threadId });
+    return;
+  }
+
+  const all = await readFileSessions();
+  const kept = all.filter((session) => session.threadId !== threadId);
+  // Nothing matched, so nothing to rewrite. Skipping the write keeps an unknown
+  // id from rewriting the whole file for no change.
+  if (kept.length === all.length) return;
+
+  await writeFile(FILE_PATH, JSON.stringify(kept, null, 2), "utf8");
+}
+
 /** One row per thread that has ever produced an answer. */
 export interface BoardThreadSummary {
   threadId: string;
