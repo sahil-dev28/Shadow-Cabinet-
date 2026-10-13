@@ -68,13 +68,13 @@ export function createPersonaAgent(config: PersonaConfig): Agent {
     id: `${config.id}-agent`,
     name: config.id.toUpperCase(),
     instructions: buildInstructions(config),
-    model: "anthropic/claude-sonnet-4-5",
+    model: "anthropic/claude-sonnet-5-5",
     tools: companyDataTools,
     // Normalise first: control characters would otherwise split the words an
     // injection is built from before the detector reads them.
     inputProcessors: [
       new UnicodeNormalizer({ stripControlChars: true }),
-      new PromptInjectionDetector({ model: "anthropic/claude-haiku-4-5" }),
+      new PromptInjectionDetector({ model: "anthropic/claude-haiku-5-5" }),
     ],
     outputProcessors: [new TokenLimiterProcessor({ limit: OUTPUT_TOKEN_LIMIT })],
     // All four personas share the board thread, so each one sees the whole

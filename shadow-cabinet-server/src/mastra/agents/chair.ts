@@ -35,7 +35,7 @@ own priorities would flip your recommendation the other way.
   asked for an answer and gets one.
 - Do not introduce a position nobody on the board argued.
 `.trim(),
-  model: "anthropic/claude-sonnet-4-5",
+  model: "anthropic/claude-sonnet-5-5",
   tools: companyDataTools,
   memory: new Memory({ options: { lastMessages: 20 } }),
 });

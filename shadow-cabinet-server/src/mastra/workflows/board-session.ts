@@ -585,7 +585,7 @@ Question: "${question}"`,
       {
         // Naming is not reasoning, so it gets the cheap model. No `memory`
         // either: the thread should not carry its own naming prompt as a turn.
-        model: "anthropic/claude-haiku-4-5",
+        model: "anthropic/claude-haiku-5-5",
         structuredOutput: { schema: titleSchema },
       },
     );

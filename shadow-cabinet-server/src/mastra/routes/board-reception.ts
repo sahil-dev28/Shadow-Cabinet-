@@ -45,7 +45,7 @@ Decide whether this message needs the board:
 If it does not, write the reply yourself: greet briefly, say what the board is
 for, and invite a business question. Never invent company figures.`,
         {
-          model: "anthropic/claude-haiku-4-5",
+          model: "anthropic/claude-haiku-5-5",
           structuredOutput: { schema: receptionSchema },
         },
       );

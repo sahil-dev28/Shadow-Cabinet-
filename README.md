@@ -180,7 +180,7 @@ a figure rather than trust the transcript.
 
 **Guardrails.** Every persona runs two input processors, in order:
 `UnicodeNormalizer({ stripControlChars: true })` then
-`PromptInjectionDetector({ model: "anthropic/claude-haiku-4-5" })`. Normalising
+`PromptInjectionDetector({ model: "anthropic/claude-haiku-5-5" })`. Normalising
 first matters — a detector reading unnormalised text sees control characters
 splitting the very words an injection is built from. Detection is
 classification, not reasoning, so it runs on the cheap fast model. Output is

@@ -15,6 +15,9 @@ export const mastra = new Mastra({
   workflows: { boardSession: boardSessionWorkflow },
   storage: createStorage(),
   server: {
+    // Mastra binds to localhost by default, which a hosted container (Render)
+    // cannot route traffic to. The port still comes from `PORT`.
+    host: "0.0.0.0",
     apiRoutes: [
       // The board: one CEO question in, three rounds of debate closed by the
       // chair's single answer out.
